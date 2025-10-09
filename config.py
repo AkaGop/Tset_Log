@@ -1,0 +1,24 @@
+# config.py
+
+"""
+Single source of truth for all static configuration data and knowledge bases.
+"""
+
+KNOWLEDGE_BASE = {
+    "ceid_map": {
+        11: "GemEquipmentOFFLINE", 12: "GemControlStateLOCAL", 13: "GemControlStateREMOTE",
+        14: "GemMsgRecognition", 16: "GemPPChangeEvent", 30: "GemProcessStateChange",
+        101: "AlarmClear", 102: "AlarmSet", 113: "AlarmSet", 114: "AlarmSet", 18: "AlarmSet",
+        120: "IDRead", 121: "UnloadedFromMag_OR_LoadedToTool", 127: "LoadedToTool",
+        131: "LoadToToolCompleted", 132: "UnloadFromToolCompleted", 136: "MappingCompleted",
+        141: "PortStatusChange", 151: "MagazineDocked", 180: "RequestMagazineDock",
+        181: "MagazineDocked", 182: "MagazineUndocked", 183: "RequestOperatorIdCheck",
+        184: "RequestOperatorLogin", 185: "RequestMappingCheck",
+    },
+    "secs_map": {
+        "S1F1": "Are You There Request", "S1F2": "Are You There Data",
+        "S1F3": "Selected Equipment Status Request", "S1F4": "Selected Equipment Status Data",
+        "S2F49": "Enhanced Remote Command", "S2F50": "Enhanced Remote Command Acknowledge",
+        "S6F11": "Event Report Send", "S6F12": "Event Report Acknowledge",
+    }
+}
