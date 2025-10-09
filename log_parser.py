@@ -5,31 +5,16 @@
 import re
 from io import StringIO
 
-# --- KNOWLEDGE BASE (Derived from Hirata Manuals) ---
-# This helps us translate IDs into human-readable names.
 KNOWLEDGE_BASE = {
     "ceid_map": {
-        11: "GemEquipmentOFFLINE",
-        12: "GemControlStateLOCAL",
-        13: "GemControlStateREMOTE",
-        14: "GemMsgRecognition",
-        16: "GemPPChangeEvent",
-        30: "GemProcessStateChange",
-        101: "AlarmClear",
-        102: "AlarmSet",
-        120: "IDRead",
-        121: "UnloadedFromMag_OR_LoadedToTool", # Note: This ID is used for multiple events
-        127: "LoadedToTool",
-        131: "LoadToToolCompleted",
-        132: "UnloadFromToolCompleted",
-        136: "MappingCompleted",
-        141: "PortStatusChange",
-        151: "MagazineDocked",
-        181: "MagazineDocked", # Duplicate entry is fine, maps to same event
-        182: "MagazineUndocked",
-        183: "RequestOperatorIdCheck",
-        184: "RequestOperatorLogin",
-        185: "RequestMappingCheck",
+        11: "GemEquipmentOFFLINE", 12: "GemControlStateLOCAL", 13: "GemControlStateREMOTE",
+        14: "GemMsgRecognition", 16: "GemPPChangeEvent", 30: "GemProcessStateChange",
+        101: "AlarmClear", 102: "AlarmSet", 113: "AlarmSet", 114: "AlarmSet", 18: "AlarmSet",
+        120: "IDRead", 121: "UnloadedFromMag_OR_LoadedToTool", 127: "LoadedToTool",
+        131: "LoadToToolCompleted", 132: "UnloadFromToolCompleted", 136: "MappingCompleted",
+        141: "PortStatusChange", 151: "MagazineDocked", 180: "RequestMagazineDock",
+        181: "MagazineDocked", 182: "MagazineUndocked", 183: "RequestOperatorIdCheck",
+        184: "RequestOperatorLogin", 185: "RequestMappingCheck",
     },
     "secs_map": {
         "S1F1": "Are You There Request", "S1F2": "Are You There Data",
@@ -40,118 +25,98 @@ KNOWLEDGE_BASE = {
 }
 
 def _parse_secs_data_block(raw_data_block):
-    """Parses a raw SECS-II data block string to extract key values."""
+    """A more robust parser for the raw SECS-II data block string."""
     if not raw_data_block:
         return {}
 
-    extracted_data = {}
+    data = {}
+    full_text = "".join(raw_data_block)
 
-    # Pattern to find any Unsigned Integer and check if it's a known CEID
-    # Example: <U4 [1] 181> -> finds 181
-    ceid_matches = re.findall(r"<\s*U\d\s*\[\d+\]\s*(\d+)\s*>", raw_data_block)
-    for potential_ceid in ceid_matches:
-        if int(potential_ceid) in KNOWLEDGE_BASE["ceid_map"]:
-            extracted_data['CEID'] = int(potential_ceid)
-            # Once we find the CEID, we can stop looking for it.
-            break
-    
-    # Pattern to find a Remote Command (RCMD)
-    # Example: <A [9] 'LOADSTART'> -> finds LOADSTART
-    rcmd_match = re.search(r"<\s*A\s*\[\d+\]\s*'([A-Z_]{5,})'\s*>", raw_data_block)
+    # Find all Unsigned Integers and check if they are a known CEID or AlarmID
+    uint_matches = re.findall(r'<U\d\s\[\d+\]\s(\d+)>', full_text)
+    for val_str in uint_matches:
+        val = int(val_str)
+        if val in KNOWLEDGE_BASE["ceid_map"]:
+            if "Alarm" in KNOWLEDGE_BASE["ceid_map"][val]:
+                if 'AlarmID' not in data: # Grab the first one we see
+                    data['AlarmID'] = val
+            else:
+                if 'CEID' not in data: # Grab the first one we see
+                    data['CEID'] = val
+
+    # Find Remote Commands
+    rcmd_match = re.search(r"<\s*A\s*\[\d+\]\s*'([A-Z_]{5,})'", full_text)
     if rcmd_match:
-        extracted_data['RCMD'] = rcmd_match.group(1)
+        data['RCMD'] = rcmd_match.group(1)
 
-    # Dictionary of specific patterns to find common data points
+    # Find specific key-value pairs
     patterns = {
-        'OperatorID': r"'OPERATORID'>\s*<A\s*\[\d+\]\s*'(\w+)'",
-        'MagazineID': r"'MAGAZINEID'>\s*<A\s*\[\d+\]\s*'([\w-]+)'",
-        'Result': r"'RESULT'>\s*<U1\s*\[\d+\]\s*(\d+)>",
-        'LotID': r"'LOTID'>\s*<A\s*\[\d+\]\s*'([\d\.]+)'",
-        'PortStatus': r"<A\s*\[3\]\s*'(\w+)'", # For events like PortStatusChange
+        'OperatorID': r"'OPERATORID'\s*>\s*<A\[\d+\]\s*'([^']*)'",
+        'MagazineID': r"'MAGAZINEID'\s*>\s*<A\[\d+\]\s*'([^']*)'",
+        'Result': r"'RESULT'\s*>\s*<U1\[\d+\]\s*(\d)",
+        'LotID': r"'LOTID'\s*>\s*<A\[\d+\]\s*'([^']*)'",
+        'PortStatus': r"<A\s\[3\]\s*'(\w+)'"
     }
-
     for key, pattern in patterns.items():
-        match = re.search(pattern, raw_data_block, re.IGNORECASE) # Ignore case for robustness
+        match = re.search(pattern, full_text, re.IGNORECASE)
         if match:
             value = match.group(1)
             if key == 'Result':
-                # Translate result code into human-readable format
-                extracted_data[key] = "Success" if value == '0' else f"Failure({value})"
+                data[key] = "Success" if value == '0' else f"Failure({value})"
             else:
-                extracted_data[key] = value
-
-    return extracted_data
-
+                data[key] = value
+                
+    return data
 
 def parse_log_file(uploaded_file):
-    """
-    Reads an uploaded file and parses it into a structured list of events.
-    """
     events = []
-    
     if not uploaded_file:
         return events
 
-    # Streamlit's uploaded file is a bytes-like object. We need to decode it into a string.
-    # StringIO makes it behave like a file on disk, which is easy to iterate over.
     try:
         stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
         lines = stringio.readlines()
     except Exception:
-        # Fallback for potentially different encodings
-        stringio = StringIO(uploaded_file.getvalue().decode("latin-1"))
+        stringio = StringIO(uploaded_file.getvalue().decode("latin-1", errors='ignore'))
         lines = stringio.readlines()
-
 
     i = 0
     while i < len(lines):
         line = lines[i].strip()
-        
-        # This is the main regex to capture the timestamp, log type, and the rest of the message.
         header_match = re.match(r"(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d+),\[([^\]]+)\],(.*)", line)
         
         if not header_match:
             i += 1
-            continue # Skip lines that don't match the primary log format
+            continue
         
         timestamp_str, log_type, message_part = header_match.groups()
         
-        # Extract the message name (e.g., S6F11, S2F49)
-        msg_name_match = re.search(r"MessageName=(\w+)", message_part) or \
-                         re.search(r"Message=.*?:\'(\w+)\'", message_part)
+        msg_name_match = re.search(r"MessageName=(\w+)", message_part) or re.search(r"Message=.*?:\'(\w+)\'", message_part)
         msg_name = msg_name_match.group(1) if msg_name_match else "N/A"
 
-        # Check if this line is followed by a SECS-II data block (starts with '<')
         data_block_lines = []
-        if "Core:Send" in log_type or "Core:Receive" in log_type:
-            # Look ahead to the next lines to find the data block
+        if ("Core:Send" in log_type or "Core:Receive" in log_type):
             if i + 1 < len(lines) and lines[i+1].strip().startswith('<'):
                 j = i + 1
-                # Read lines until we hit the end of the block, marked by a '.'
                 while j < len(lines) and lines[j].strip() != '.':
                     data_block_lines.append(lines[j])
                     j += 1
-                i = j # Move the main loop index past the data block we just consumed
+                i = j
         
-        raw_data_block = "".join(data_block_lines)
-        
-        # --- CORRECTED LOGIC ---
-        event_data = {
+        # We process every line now, but only add 'details' if something is parsed.
+        event = {
             "timestamp": timestamp_str,
             "log_type": log_type,
             "msg_name": msg_name,
         }
 
-        # If a data block was found, parse it and add the details to the event.
-        if raw_data_block:
-            parsed_data = _parse_secs_data_block(raw_data_block)
-            # We only add the 'details' key if the parser found something meaningful
-            if parsed_data:
-                 event_data["details"] = parsed_data
-
-        events.append(event_data)
+        if data_block_lines:
+            parsed_details = _parse_secs_data_block(data_block_lines)
+            if parsed_details: # Only add the 'details' key if the dictionary is not empty
+                event['details'] = parsed_details
         
+        events.append(event)
         i += 1
-        
+            
     return events
 
