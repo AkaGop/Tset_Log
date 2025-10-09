@@ -1,48 +1,63 @@
 # app.py
 
+# app.py
+
 import streamlit as st
 import pandas as pd
-from log_parser import parse_log_file
+from log_parser import parse_log_file, KNOWLEDGE_BASE
 
 st.set_page_config(page_title="Hirata Log Analyzer", layout="wide")
 st.title("Hirata Equipment Log Analyzer")
-st.write(
-    "This tool parses and analyzes Hirata equipment log files (.txt or .log) "
-    "to provide key performance indicators and an operational summary."
-)
 
 uploaded_file = st.file_uploader(
     "Upload your Hirata Log File",
-    type=['txt', 'log'],
-    accept_multiple_files=False
+    type=['txt', 'log']
 )
 
 if uploaded_file is not None:
     st.success(f"Successfully uploaded: **{uploaded_file.name}**")
     st.write("---")
 
-    with st.spinner("Parsing log file for detailed events..."):
+    with st.spinner("Parsing log file..."):
         all_events = parse_log_file(uploaded_file)
     
-    # Filter for events that have the 'details' key we added
-    meaningful_events = [event for event in all_events if "details" in event]
+    # Filter for events that have the 'details' key, which means our parser found something.
+    meaningful_events = [event for event in all_events if 'details' in event]
     
-    st.header("Detailed Event Log")
+    st.header("Analysis Results")
     
     if meaningful_events:
+        st.metric(label="Meaningful Events with SECS Data", value=len(meaningful_events))
+
+        # Use pandas json_normalize to flatten the nested 'details' dictionary
         df = pd.json_normalize(meaningful_events)
         
-        # Reorder columns for better readability
-        cols = ["timestamp", "msg_name", "log_type", "details.CEID", "details.RCMD", "details.OperatorID", "details.MagazineID", "details.LotID", "details.Result", "details.PortStatus"]
-        existing_cols = [col for col in cols if col in df.columns]
+        # Define the desired column order
+        cols_in_order = [
+            "timestamp", "msg_name", "details.CEID", "details.RCMD", 
+            "details.OperatorID", "details.MagazineID", "details.LotID", 
+            "details.Result", "details.PortStatus", "log_type"
+        ]
         
-        st.metric(label="Total Meaningful Events Found", value=len(df))
-        st.dataframe(df[existing_cols])
+        # Filter the DataFrame to show only existing columns from our desired list
+        display_cols = [col for col in cols_in_order if col in df.columns]
+        st.dataframe(df[display_cols])
 
-        st.subheader("Raw Data of First 5 Meaningful Events")
-        st.json(meaningful_events[:5])
+        # --- DEBUGGING SECTION ---
+        with st.expander("Show Raw Parsed Data for Debugging"):
+            st.write("First 20 meaningful events found:")
+            st.json(meaningful_events[:20])
+            st.write("All parsed events (including those without details):")
+            st.metric(label="Total Log Lines Parsed", value=len(all_events))
+            st.json(all_events[:20])
+
     else:
         st.warning("No meaningful SECS data blocks were found in the log file.")
+        # --- DEBUGGING SECTION ---
+        with st.expander("Show Raw Parser Output (Debugging)"):
+             st.write(f"Total log lines parsed: {len(all_events)}. No lines contained parsable SECS data.")
+             st.write("First 50 raw parsed events:")
+             st.json(all_events[:50])
 
 else:
     st.info("Please upload a log file to begin analysis.")
