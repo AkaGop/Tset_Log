@@ -1,9 +1,13 @@
 # app.py
 
-import streamlit as st
-import pandas as pd # We import pandas now, as we'll use it soon.
+# app.py
 
-# 1. Set up the page title and a brief description
+# app.py
+
+import streamlit as st
+import pandas as pd
+from log_parser import parse_log_file # Import our new function
+
 st.set_page_config(page_title="Hirata Log Analyzer", layout="wide")
 st.title("Hirata Equipment Log Analyzer")
 st.write(
@@ -11,29 +15,27 @@ st.write(
     "to provide key performance indicators and an operational summary."
 )
 
-# 2. Create the file uploader widget
-# We use the 'type' parameter to accept both .txt and .log files.
 uploaded_file = st.file_uploader(
     "Upload your Hirata Log File",
     type=['txt', 'log'],
     accept_multiple_files=False
 )
 
-# 3. Add a placeholder for future processing
+# This is the updated section
 if uploaded_file is not None:
-    # This block will execute only after a file has been successfully uploaded.
-    
     st.success(f"Successfully uploaded: **{uploaded_file.name}**")
-    
-    # Display some basic information about the uploaded file
-    file_details = {
-        "File Name": uploaded_file.name,
-        "File Type": uploaded_file.type,
-        "File Size (Bytes)": uploaded_file.size
-    }
     st.write("---")
-    st.subheader("Uploaded File Details")
-    st.json(file_details)
+
+    # Call the parsing function
+    with st.spinner("Parsing log file..."):
+        events = parse_log_file(uploaded_file)
+    
+    st.header("Initial Parsing Results")
+    st.metric(label="Total Events Parsed", value=len(events))
+
+    # Display the first 5 events as a sanity check
+    st.subheader("Sample of Parsed Events (First 5)")
+    st.json(events[:5]) # Show first 5 items from our list of events
 
 else:
     st.info("Please upload a log file to begin analysis.")
