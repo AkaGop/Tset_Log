@@ -1,5 +1,7 @@
 # log_parser.py
 
+# log_parser.py
+
 import re
 from io import StringIO
 
@@ -152,6 +154,4 @@ def parse_log_file(uploaded_file):
         i += 1
         
     return events
-
-After you update this file and the app.py file from the previous step, your app should work correctly.
 
