@@ -1,7 +1,5 @@
 # log_parser.py
 
-# log_parser.py
-
 import re
 from io import StringIO
 
@@ -17,7 +15,9 @@ KNOWLEDGE_BASE = {
         30: "GemProcessStateChange",
         101: "AlarmClear",
         102: "AlarmSet",
+        120: "IDRead",
         121: "UnloadedFromMag_OR_LoadedToTool", # Note: This ID is used for multiple events
+        127: "LoadedToTool",
         131: "LoadToToolCompleted",
         132: "UnloadFromToolCompleted",
         136: "MappingCompleted",
@@ -45,7 +45,7 @@ def _parse_secs_data_block(raw_data_block):
     extracted_data = {}
 
     # Pattern to find any Unsigned Integer and check if it's a known CEID
-    # <U4 [1] 181> -> finds 181
+    # Example: <U4 [1] 181> -> finds 181
     ceid_matches = re.findall(r"<\s*U\d\s*\[\d+\]\s*(\d+)\s*>", raw_data_block)
     for potential_ceid in ceid_matches:
         if int(potential_ceid) in KNOWLEDGE_BASE["ceid_map"]:
@@ -54,7 +54,7 @@ def _parse_secs_data_block(raw_data_block):
             break
     
     # Pattern to find a Remote Command (RCMD)
-    # <A [9] 'LOADSTART'> -> finds LOADSTART
+    # Example: <A [9] 'LOADSTART'> -> finds LOADSTART
     rcmd_match = re.search(r"<\s*A\s*\[\d+\]\s*'([A-Z_]{5,})'\s*>", raw_data_block)
     if rcmd_match:
         extracted_data['RCMD'] = rcmd_match.group(1)
@@ -86,55 +86,72 @@ def parse_log_file(uploaded_file):
     Reads an uploaded file and parses it into a structured list of events.
     """
     events = []
-    stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
-    lines = stringio.readlines()
+    
+    if not uploaded_file:
+        return events
+
+    # Streamlit's uploaded file is a bytes-like object. We need to decode it into a string.
+    # StringIO makes it behave like a file on disk, which is easy to iterate over.
+    try:
+        stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
+        lines = stringio.readlines()
+    except Exception:
+        # Fallback for potentially different encodings
+        stringio = StringIO(uploaded_file.getvalue().decode("latin-1"))
+        lines = stringio.readlines()
+
 
     i = 0
     while i < len(lines):
         line = lines[i].strip()
+        
+        # This is the main regex to capture the timestamp, log type, and the rest of the message.
         header_match = re.match(r"(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d+),\[([^\]]+)\],(.*)", line)
         
         if not header_match:
             i += 1
-            continue
+            continue # Skip lines that don't match the primary log format
         
         timestamp_str, log_type, message_part = header_match.groups()
         
+        # Extract the message name (e.g., S6F11, S2F49)
         msg_name_match = re.search(r"MessageName=(\w+)", message_part) or \
                          re.search(r"Message=.*?:\'(\w+)\'", message_part)
         msg_name = msg_name_match.group(1) if msg_name_match else "N/A"
 
+        # Check if this line is followed by a SECS-II data block (starts with '<')
         data_block_lines = []
         if "Core:Send" in log_type or "Core:Receive" in log_type:
+            # Look ahead to the next lines to find the data block
             if i + 1 < len(lines) and lines[i+1].strip().startswith('<'):
                 j = i + 1
+                # Read lines until we hit the end of the block, marked by a '.'
                 while j < len(lines) and lines[j].strip() != '.':
                     data_block_lines.append(lines[j])
                     j += 1
-                i = j
+                i = j # Move the main loop index past the data block we just consumed
         
         raw_data_block = "".join(data_block_lines)
         
-        # --- NEW PART ---
-        # Parse the raw data block to get structured data
-        parsed_data = _parse_secs_data_block(raw_data_block)
-event_data = {
-    "timestamp": timestamp_str,
-    "log_type": log_type,
-    "msg_name": msg_name,
-}
+        # --- CORRECTED LOGIC ---
+        event_data = {
+            "timestamp": timestamp_str,
+            "log_type": log_type,
+            "msg_name": msg_name,
+        }
 
-# If a data block was found and parsed, add the details to the event.
-if raw_data_block:
-    parsed_data = _parse_secs_data_block(raw_data_block)
-    # We only add the details key if the parser found something meaningful
-    if parsed_data:
-         event_data["details"] = parsed_data
+        # If a data block was found, parse it and add the details to the event.
+        if raw_data_block:
+            parsed_data = _parse_secs_data_block(raw_data_block)
+            # We only add the 'details' key if the parser found something meaningful
+            if parsed_data:
+                 event_data["details"] = parsed_data
 
-events.append(event_data)
-
-
+        events.append(event_data)
         
         i += 1
         
     return events
+
+After you update this file and the app.py file from the previous step, your app should work correctly.
+
