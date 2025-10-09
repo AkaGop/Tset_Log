@@ -1,9 +1,10 @@
 # app.py
 
+# app.py
 
 import streamlit as st
 import pandas as pd
-from log_parser import parse_log_file # Import our new function
+from log_parser import parse_log_file
 
 st.set_page_config(page_title="Hirata Log Analyzer", layout="wide")
 st.title("Hirata Equipment Log Analyzer")
@@ -18,21 +19,33 @@ uploaded_file = st.file_uploader(
     accept_multiple_files=False
 )
 
-# This is the updated section
 if uploaded_file is not None:
     st.success(f"Successfully uploaded: **{uploaded_file.name}**")
     st.write("---")
 
-    # Call the parsing function
-    with st.spinner("Parsing log file..."):
+    with st.spinner("Parsing log file for detailed events..."):
+        # The parse_log_file function now returns a more refined list
         events = parse_log_file(uploaded_file)
     
-    st.header("Initial Parsing Results")
-    st.metric(label="Total Events Parsed", value=len(events))
+    st.header("Detailed Event Log")
+    
+    if events:
+        # We convert our list of event dictionaries into a pandas DataFrame for better display
+        df = pd.json_normalize(events)
+        
+        # Reorder columns for better readability
+        # Some columns might not exist, so we check first
+        cols = ["timestamp", "msg_name", "log_type", "details.CEID", "details.RCMD", "details.OperatorID", "details.MagazineID", "details.LotID", "details.Result", "details.PortStatus"]
+        existing_cols = [col for col in cols if col in df.columns]
+        
+        st.metric(label="Total Meaningful Events Found", value=len(df))
+        st.dataframe(df[existing_cols])
 
-    # Display the first 5 events as a sanity check
-    st.subheader("Sample of Parsed Events (First 5)")
-    st.json(events[:5]) # Show first 5 items from our list of events
+        st.subheader("Raw Data of First 5 Events")
+        st.json(events[:5])
+    else:
+        st.warning("No meaningful SECS data blocks were found in the log file.")
 
 else:
     st.info("Please upload a log file to begin analysis.")
+
