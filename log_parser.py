@@ -1,28 +1,8 @@
 # log_parser.py
 
-# log_parser.py
-
 import re
 from io import StringIO
-
-KNOWLEDGE_BASE = {
-    "ceid_map": {
-        11: "GemEquipmentOFFLINE", 12: "GemControlStateLOCAL", 13: "GemControlStateREMOTE",
-        14: "GemMsgRecognition", 16: "GemPPChangeEvent", 30: "GemProcessStateChange",
-        101: "AlarmClear", 102: "AlarmSet", 113: "AlarmSet", 114: "AlarmSet", 18: "AlarmSet",
-        120: "IDRead", 121: "UnloadedFromMag_OR_LoadedToTool", 127: "LoadedToTool",
-        131: "LoadToToolCompleted", 132: "UnloadFromToolCompleted", 136: "MappingCompleted",
-        141: "PortStatusChange", 151: "MagazineDocked", 180: "RequestMagazineDock",
-        181: "MagazineDocked", 182: "MagazineUndocked", 183: "RequestOperatorIdCheck",
-        184: "RequestOperatorLogin", 185: "RequestMappingCheck",
-    },
-    "secs_map": {
-        "S1F1": "Are You There Request", "S1F2": "Are You There Data",
-        "S1F3": "Selected Equipment Status Request", "S1F4": "Selected Equipment Status Data",
-        "S2F49": "Enhanced Remote Command", "S2F50": "Enhanced Remote Command Acknowledge",
-        "S6F11": "Event Report Send", "S6F12": "Event Report Acknowledge",
-    }
-}
+from config import KNOWLEDGE_BASE  # Import from the central config file
 
 def _parse_secs_data_block(raw_data_block):
     """A more robust parser for the raw SECS-II data block string."""
@@ -38,10 +18,10 @@ def _parse_secs_data_block(raw_data_block):
         val = int(val_str)
         if val in KNOWLEDGE_BASE["ceid_map"]:
             if "Alarm" in KNOWLEDGE_BASE["ceid_map"][val]:
-                if 'AlarmID' not in data: # Grab the first one we see
+                if 'AlarmID' not in data:
                     data['AlarmID'] = val
             else:
-                if 'CEID' not in data: # Grab the first one we see
+                if 'CEID' not in data:
                     data['CEID'] = val
 
     # Find Remote Commands
@@ -75,10 +55,10 @@ def parse_log_file(uploaded_file):
 
     try:
         stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
-        lines = stringio.readlines()
     except Exception:
         stringio = StringIO(uploaded_file.getvalue().decode("latin-1", errors='ignore'))
-        lines = stringio.readlines()
+    
+    lines = stringio.readlines()
 
     i = 0
     while i < len(lines):
@@ -103,7 +83,6 @@ def parse_log_file(uploaded_file):
                     j += 1
                 i = j
         
-        # We process every line now, but only add 'details' if something is parsed.
         event = {
             "timestamp": timestamp_str,
             "log_type": log_type,
@@ -112,11 +91,10 @@ def parse_log_file(uploaded_file):
 
         if data_block_lines:
             parsed_details = _parse_secs_data_block(data_block_lines)
-            if parsed_details: # Only add the 'details' key if the dictionary is not empty
-                event['details'] = parsed_details
+            if parsed_details:
+                 event['details'] = parsed_details
         
         events.append(event)
         i += 1
             
     return events
-
