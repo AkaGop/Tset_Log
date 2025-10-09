@@ -1,7 +1,5 @@
 # app.py
 
-# app.py
-
 import streamlit as st
 import pandas as pd
 from log_parser import parse_log_file
@@ -24,17 +22,15 @@ if uploaded_file is not None:
     st.write("---")
 
     with st.spinner("Parsing log file for detailed events..."):
-        # The parse_log_file function now returns a more refined list
         events = parse_log_file(uploaded_file)
     
     st.header("Detailed Event Log")
     
     if events:
-        # We convert our list of event dictionaries into a pandas DataFrame for better display
+        # This line is critical: it flattens the nested 'details' dictionary.
         df = pd.json_normalize(events)
         
-        # Reorder columns for better readability
-        # Some columns might not exist, so we check first
+        # Reorder columns for better readability.
         cols = ["timestamp", "msg_name", "log_type", "details.CEID", "details.RCMD", "details.OperatorID", "details.MagazineID", "details.LotID", "details.Result", "details.PortStatus"]
         existing_cols = [col for col in cols if col in df.columns]
         
@@ -48,4 +44,3 @@ if uploaded_file is not None:
 
 else:
     st.info("Please upload a log file to begin analysis.")
-
