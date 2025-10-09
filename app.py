@@ -3,6 +3,7 @@
 import streamlit as st
 import pandas as pd
 from log_parser import parse_log_file
+# Correctly import the standardized name
 from config import CEID_MAP
 
 st.set_page_config(page_title="Hirata Log Analyzer", layout="wide")
@@ -11,7 +12,7 @@ st.title("Hirata Equipment Log Analyzer")
 uploaded_file = st.file_uploader("Upload your Hirata Log File (.txt or .log)", type=['txt', 'log'])
 
 if uploaded_file:
-    with st.spinner("Analyzing log file... This may take a moment."):
+    with st.spinner("Analyzing log file..."):
         all_events = parse_log_file(uploaded_file)
     
     meaningful_events = [event for event in all_events if 'details' in event]
@@ -21,13 +22,11 @@ if uploaded_file:
     if meaningful_events:
         df = pd.json_normalize(meaningful_events)
         
-        # Create a human-readable 'EventName' column
         if 'details.CEID' in df.columns:
             df['EventName'] = df['details.CEID'].map(CEID_MAP).fillna("Unknown Event")
         else:
-            df['EventName'] = df['details.RCMD'] # For S2F49 commands
+            df['EventName'] = df.get('details.RCMD', "Command")
 
-        # Define and display columns in a logical order
         cols_in_order = [
             "timestamp", "msg_name", "EventName", "details.LotID", "details.PanelCount",
             "details.MagazineID", "details.OperatorID", "details.PortID", "details.PortStatus",
