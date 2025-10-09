@@ -22,23 +22,25 @@ if uploaded_file is not None:
     st.write("---")
 
     with st.spinner("Parsing log file for detailed events..."):
-        events = parse_log_file(uploaded_file)
+        all_events = parse_log_file(uploaded_file)
+    
+    # Filter for events that have the 'details' key we added
+    meaningful_events = [event for event in all_events if "details" in event]
     
     st.header("Detailed Event Log")
     
-    if events:
-        # This line is critical: it flattens the nested 'details' dictionary.
-        df = pd.json_normalize(events)
+    if meaningful_events:
+        df = pd.json_normalize(meaningful_events)
         
-        # Reorder columns for better readability.
+        # Reorder columns for better readability
         cols = ["timestamp", "msg_name", "log_type", "details.CEID", "details.RCMD", "details.OperatorID", "details.MagazineID", "details.LotID", "details.Result", "details.PortStatus"]
         existing_cols = [col for col in cols if col in df.columns]
         
         st.metric(label="Total Meaningful Events Found", value=len(df))
         st.dataframe(df[existing_cols])
 
-        st.subheader("Raw Data of First 5 Events")
-        st.json(events[:5])
+        st.subheader("Raw Data of First 5 Meaningful Events")
+        st.json(meaningful_events[:5])
     else:
         st.warning("No meaningful SECS data blocks were found in the log file.")
 
