@@ -1,4 +1,5 @@
 # config.py
+
 """
 Single source of truth for all static configuration data, knowledge bases, and report definitions.
 """
