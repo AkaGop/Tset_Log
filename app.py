@@ -1,5 +1,6 @@
 # app.py
 
+
 import streamlit as st
 import pandas as pd
 from log_parser import parse_log_file # Import our new function
