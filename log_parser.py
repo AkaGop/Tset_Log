@@ -118,17 +118,22 @@ def parse_log_file(uploaded_file):
         # --- NEW PART ---
         # Parse the raw data block to get structured data
         parsed_data = _parse_secs_data_block(raw_data_block)
+event_data = {
+    "timestamp": timestamp_str,
+    "log_type": log_type,
+    "msg_name": msg_name,
+}
+
+# If a data block was found and parsed, add the details to the event.
+if raw_data_block:
+    parsed_data = _parse_secs_data_block(raw_data_block)
+    # We only add the details key if the parser found something meaningful
+    if parsed_data:
+         event_data["details"] = parsed_data
+
+events.append(event_data)
 
 
-# We only want to create an event if our detailed parser found something.
-if parsed_data:
-    event_data = {
-        "timestamp": timestamp_str,
-        "log_type": log_type,
-        "msg_name": msg_name,
-        "details": parsed_data # Store the dictionary of parsed details
-    }
-    events.append(event_data)
         
         i += 1
         
