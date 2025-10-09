@@ -3,8 +3,7 @@
 import streamlit as st
 import pandas as pd
 from log_parser import parse_log_file
-# Correctly import the standardized name
-from config import CEID_MAP
+from config import KNOWLEDGE_BASE  # This is the correct, consistent import
 
 st.set_page_config(page_title="Hirata Log Analyzer", layout="wide")
 st.title("Hirata Equipment Log Analyzer")
@@ -22,8 +21,10 @@ if uploaded_file:
     if meaningful_events:
         df = pd.json_normalize(meaningful_events)
         
+        # Use the imported KNOWLEDGE_BASE to add a human-readable description
         if 'details.CEID' in df.columns:
-            df['EventName'] = df['details.CEID'].map(CEID_MAP).fillna("Unknown Event")
+            # Correctly access the 'ceid_map' within the KNOWLEDGE_BASE dictionary
+            df['EventName'] = df['details.CEID'].map(KNOWLEDGE_BASE['ceid_map']).fillna("Unknown Event")
         else:
             df['EventName'] = df.get('details.RCMD', "Command")
 
@@ -32,6 +33,7 @@ if uploaded_file:
             "details.MagazineID", "details.OperatorID", "details.PortID", "details.PortStatus",
             "details.AlarmID"
         ]
+        
         display_cols = [col for col in cols_in_order if col in df.columns]
         
         st.metric(label="Meaningful Events Found", value=len(df))
