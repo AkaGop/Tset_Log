@@ -2,32 +2,28 @@
 
 import re
 from io import StringIO
-from config import KNOWLEDGE_BASE
+from config import CEID_MAP, RPTID_MAP
 
 def _parse_event_report(full_text: str) -> dict:
     data = {}
-    ceid_map = KNOWLEDGE_BASE['ceid_map']
-    rptid_map = KNOWLEDGE_BASE['rptid_map']
-
     uints = re.findall(r'<U\d\s\[\d+\]\s(\d+)>', full_text)
     if len(uints) < 2: return {}
 
     ceid = int(uints[1])
-    if ceid in ceid_map:
+    if ceid in CEID_MAP:
         data['CEID'] = ceid
-        if "Alarm" in ceid_map[ceid]: data['AlarmID'] = ceid
+        if "Alarm" in CEID_MAP[ceid]: data['AlarmID'] = ceid
 
     if len(uints) >= 3:
         rptid = int(uints[2])
-        if rptid in rptid_map:
+        if rptid in RPTID_MAP:
             data['RPTID'] = rptid
-            # Corrected Regex: Makes the capture non-greedy and looks for the list structure.
             report_body_match = re.search(r'<\s*U\d\s*\[\d+\]\s*' + str(rptid) + r'\s*>\s*<L\s\[\d+\]\s*([\s\S]*?)>\s*>', full_text)
             if report_body_match:
                 report_body = report_body_match.group(1)
                 values = re.findall(r"<(?:A|U\d)\s\[\d+\]\s(?:'([^']*)'|(\d+))>", report_body)
                 flat_values = [s if s else i for s, i in values]
-                field_names = rptid_map.get(rptid, [])
+                field_names = RPTID_MAP.get(rptid, [])
                 for i, field_name in enumerate(field_names):
                     if i < len(flat_values):
                         data[field_name] = flat_values[i]
@@ -65,7 +61,6 @@ def parse_log_file(uploaded_file):
             i = j
         event = {"timestamp": timestamp_str, "log_type": log_type, "msg_name": msg_name}
         if data_block_lines:
-            # The input to the parsers must be a single string.
             full_data_block_text = "".join(data_block_lines)
             details = {}
             if msg_name == 'S6F11': details = _parse_event_report(full_data_block_text)
