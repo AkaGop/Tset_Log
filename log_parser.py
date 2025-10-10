@@ -6,60 +6,67 @@ from config import CEID_MAP, RPTID_MAP
 
 def _parse_s6f11_report(full_text: str) -> dict:
     """
-    Final, robust, and structurally-aware parser for S6F11 reports.
-    This version correctly isolates the data payload associated with an RPTID.
+    Final, structurally-aware parser for S6F11.
+    This version correctly parses the nested SECS-II list structure.
     """
     data = {}
-    
-    # --- START OF HIGHLIGHTED FIX ---
-    
-    # Step 1: Tokenize the entire data block into a flat list of its primitive values.
-    # This regex is designed to capture EITHER a string in single quotes OR a sequence of digits.
-    tokens = re.findall(r"'(.*?)'|(\d+)", full_text)
-    # The result is a list of tuples, e.g., [('', '181'), ('M70256', '')]. Flatten it into a clean list.
-    flat_values = [s if s else i for s, i in tokens]
 
-    if len(flat_values) < 3:
-        return {} # A valid report must have at least DATAID, CEID, RPTID.
+    # Step 1: Find the top-level <L,3> structure of an S6F11 message.
+    # We use a non-greedy capture `([\s\S]*?)` to get only the contents of the first L[3].
+    top_level_match = re.search(r'<\s*L\s*\[3\]\s*([\s\S]*?)>', full_text, re.DOTALL)
+    if not top_level_match:
+        return {}
 
-    # Step 2: Identify CEID and RPTID by their standard positions in the token list.
-    # The first three numeric tokens are always DATAID, CEID, RPTID.
+    body = top_level_match.group(1)
+
+    # Step 2: Extract the top-level items: DATAID, CEID, and the Report List block.
+    # This regex looks for two <U...> tags followed by a <L...> tag.
+    items = re.findall(r"<\s*(U\d)\s*\[\d+\]\s*(\d+)\s*>|<\s*(L)\s*\[\d+\]\s*([\s\S]*?)>", body)
+    
+    if len(items) < 3:
+        return {} # Must have DATAID, CEID, and Report List
+
     try:
-        uints = [int(v) for v in flat_values if v.isdigit()]
-        ceid = uints[1]
-        rptid = uints[2]
+        # Item 1 is DATAID (we ignore it for now)
+        # Item 2 is CEID
+        ceid = int(items[1][1])
+        if ceid in CEID_MAP:
+            data['CEID'] = ceid
+            if "Alarm" in CEID_MAP.get(ceid, ''):
+                data['AlarmID'] = ceid
+        
+        # Item 3 is the Report List block
+        report_list_body = items[2][3]
+        
     except (ValueError, IndexError):
-        return {} # Malformed message.
+        return {}
 
-    # Step 3: Populate initial data and verify the RPTID is one we know how to parse.
-    if ceid in CEID_MAP:
-        data['CEID'] = ceid
-        if "Alarm" in CEID_MAP.get(ceid, ''):
-            data['AlarmID'] = ceid
-            
+    # Step 3: Parse the Report List block. It contains one or more <L,2> reports.
+    # Find the RPTID (the first U-integer in the report list)
+    rptid_match = re.search(r'<\s*U\d\s*\[\d+\]\s*(\d+)\s*>', report_list_body)
+    if not rptid_match:
+        return data
+
+    rptid = int(rptid_match.group(1))
     if rptid in RPTID_MAP:
         data['RPTID'] = rptid
     else:
-        return data # We found a CEID but have no schema for this report.
+        return data # We don't have a schema for this report.
 
-    # Step 4: Find the RPTID's index in the flat token list.
-    try:
-        rptid_index = flat_values.index(str(rptid))
-        
-        # Step 5: The true data payload is the slice of the list immediately following the RPTID.
-        data_payload = flat_values[rptid_index + 1:]
-        
-        # Step 6: Map this clean payload to the field names from our config schema.
-        field_names = RPTID_MAP.get(rptid, [])
-        for i, name in enumerate(field_names):
-            if i < len(data_payload):
-                data[name] = data_payload[i]
-                
-    except (ValueError, IndexError):
-        # This acts as a failsafe if the data is malformed.
-        pass
+    # Step 4: Isolate the final data payload list that follows the RPTID.
+    rptid_tag = rptid_match.group(0) # The full tag, e.g., "<U4 [1] 141>"
+    start_index = report_list_body.find(rptid_tag) + len(rptid_tag)
+    payload_text = report_list_body[start_index:]
+    
+    # Step 5: Extract all primitive values from the payload.
+    values = re.findall(r"<(?:A|U\d)\s\[\d+\]\s(?:'([^']*)'|(\d+))>", payload_text)
+    flat_values = [s if s else i for s, i in values]
 
-    # --- END OF HIGHLIGHTED FIX ---
+    # Step 6: Map the payload values to the schema.
+    field_names = RPTID_MAP.get(rptid, [])
+    for i, name in enumerate(field_names):
+        if i < len(flat_values):
+            data[name] = flat_values[i]
             
     return data
 
@@ -91,6 +98,7 @@ def parse_log_file(uploaded_file):
         if not header_match: i += 1; continue
         
         timestamp, log_type, message_part = header_match.groups()
+        
         msg_match = re.search(r"MessageName=(\w+)|Message=.*?:\'(\w+)\'", message_part)
         msg_name = (msg_match.group(1) or msg_match.group(2)) if msg_match else "N/A"
         
