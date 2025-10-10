@@ -29,10 +29,13 @@ def _parse_event_report(data_block_lines: list) -> dict:
             # --- START OF THE FIX ---
             # This regex is now more specific. It looks for the RPTID, then captures the content
             # of the VERY NEXT <L [...]> block. This prevents it from grabbing outer timestamps.
-            report_body_match = re.search(
-                r'<\s*U\d\s*\[\d+\]\s*' + str(rptid) + r'\s*>\s*'  # Find the RPTID
-                r'<\s*L\s*\[\d+\]\s*([\s\S]*)',  # Capture everything inside the list that follows
-                full_text
+            # The buggy line from the previous version
+    report_body_match = re.search(r'<U\d\s\[\d+\]\s' + str(rptid) + r'>\s*<L\s\[(\d+)\]\s*([\s\S]*)', full_text)
+
+# The problem
+# The regex group for the report body is `([\s\S]*)`. This is too greedy.
+# It captures everything until the end of the string, including the closing `>` characters 
+# of parent lists, which breaks the subsequent `re.findall` for `values`.
             )
             # --- END OF THE FIX ---
             
