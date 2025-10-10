@@ -4,19 +4,21 @@ from datetime import datetime
 
 def analyze_log_data(events: list) -> dict:
     """
-    Analyzes a list of parsed events to calculate high-level KPIs for a complete job cycle.
+    Final, resilient analyzer. Calculates KPIs for the first complete job it finds.
+    If no complete job is found, it still populates other available data.
     """
     summary = {
         "operators": set(),
         "magazines": set(),
         "lot_id": "N/A",
         "panel_count": 0,
-        "job_start_time": None,
-        "job_end_time": None,
+        "job_start_time": "N/A",
+        "job_end_time": "N/A",
         "total_duration_sec": 0,
         "avg_cycle_time_sec": 0,
         "anomalies": [],
         "alarms": [],
+        "job_status": "No Complete Job Found"
     }
 
     if not events:
@@ -24,65 +26,56 @@ def analyze_log_data(events: list) -> dict:
 
     # --- START OF HIGHLIGHTED FIX ---
 
-    # Step 1: Find the index of all LOADSTART commands.
-    loadstart_indices = [i for i, event in enumerate(events) if event.get('details', {}).get('RCMD') == 'LOADSTART']
-
-    job_found = False
-    for start_index in loadstart_indices:
+    # Find the index of the first LOADSTART command.
+    start_index = -1
+    for i, event in enumerate(events):
+        if event.get('details', {}).get('RCMD') == 'LOADSTART':
+            start_index = i
+            break
+    
+    # If a LOADSTART was found, populate what we know.
+    if start_index != -1:
         loadstart_event = events[start_index]
-        
-        # Step 2: Search for the NEXT LoadToToolCompleted event AFTER this LOADSTART.
+        summary['lot_id'] = loadstart_event['details'].get('LotID', 'N/A')
+        summary['panel_count'] = loadstart_event['details'].get('PanelCount', 0)
+        summary['job_start_time'] = loadstart_event.get('timestamp')
+        summary['job_status'] = "Started but did not complete in this log."
+
+        # Now, search FORWARD from that start point for the completion event.
         end_index = -1
         for i in range(start_index + 1, len(events)):
             if events[i].get('details', {}).get('CEID') == 131:
                 end_index = i
-                break # Found the corresponding end event
+                break
         
-        if end_index != -1: # A complete job cycle was found
+        # If a corresponding end event was found, calculate the duration.
+        if end_index != -1:
             loadcomplete_event = events[end_index]
+            summary['job_end_time'] = loadcomplete_event.get('timestamp')
+            summary['job_status'] = "Completed"
             
-            summary['lot_id'] = loadstart_event['details'].get('LotID', 'N/A')
-            summary['panel_count'] = loadstart_event['details'].get('PanelCount', 0)
-            
-            start_time_str = loadstart_event.get('timestamp')
-            end_time_str = loadcomplete_event.get('timestamp')
-
-            if start_time_str and end_time_str:
-                summary['job_start_time'] = start_time_str
-                summary['job_end_time'] = end_time_str
+            try:
+                t_start = datetime.strptime(summary['job_start_time'], "%Y/%m/%d %H:%M:%S.%f")
+                t_end = datetime.strptime(summary['job_end_time'], "%Y/%m/%d %H:%M:%S.%f")
+                duration = (t_end - t_start).total_seconds()
                 
-                try:
-                    t_start = datetime.strptime(start_time_str, "%Y/%m/%d %H:%M:%S.%f")
-                    t_end = datetime.strptime(end_time_str, "%Y/%m/%d %H:%M:%S.%f")
-                    duration = (t_end - t_start).total_seconds()
-                    
-                    # Sanity check: duration should be positive and reasonable
-                    if duration > 0:
-                        summary['total_duration_sec'] = round(duration, 2)
-                        
-                        panel_count = summary['panel_count']
-                        if isinstance(panel_count, str) and panel_count.isdigit():
-                            panel_count = int(panel_count)
+                if duration >= 0:
+                    summary['total_duration_sec'] = round(duration, 2)
+                    panel_count = int(summary.get('panel_count', 0))
+                    if panel_count > 0:
+                        summary['avg_cycle_time_sec'] = round(duration / panel_count, 2)
+            except (ValueError, TypeError):
+                summary['job_status'] = "Completed (Error calculating duration)"
 
-                        if isinstance(panel_count, int) and panel_count > 0:
-                            cycle_time = duration / panel_count
-                            summary['avg_cycle_time_sec'] = round(cycle_time, 2)
-                
-                        job_found = True
-                        break # Stop after analyzing the first complete job found
-                except (ValueError, TypeError):
-                    continue # Try the next LOADSTART if there's a data format error
-    
     # --- END OF HIGHLIGHTED FIX ---
 
-    # Aggregate other data across all events (this part is correct)
+    # Aggregate other data across all events.
     for event in events:
         details = event.get('details', {})
         if details.get('OperatorID'): summary['operators'].add(details['OperatorID'])
         if details.get('MagazineID'): summary['magazines'].add(details['MagazineID'])
         if details.get('Result', '').startswith("Failure"):
-            event_name = event.get('details', {}).get('RCMD', 'Unknown Command')
-            summary['anomalies'].append(f"{event['timestamp']}: Host command '{event_name}' failed.")
+            summary['anomalies'].append(f"{event['timestamp']}: Host command failed.")
         if details.get('AlarmID'):
             summary['alarms'].append(f"{event['timestamp']}: Alarm {details['AlarmID']} occurred.")
             
