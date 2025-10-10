@@ -4,47 +4,64 @@ import re
 from io import StringIO
 from config import CEID_MAP, RPTID_MAP
 
+# ----------------- START OF CHANGED CODE -----------------
+
 def _parse_s6f11_report(full_text: str) -> dict:
     """
-    State-aware parser for S6F11. It identifies the RPTID and delegates
-    to a specific function for that report structure.
+    Final robust parser for S6F11. Finds the RPTID and correctly
+    extracts the ordered data that follows it, regardless of list nesting.
     """
     data = {}
     
-    # Find all Unsigned Integers to identify CEID and RPTID
-    uints = re.findall(r'<U\d\s\[\d+\]\s(\d+)>', full_text)
-    if len(uints) < 3: return {} # Not a valid S6F11 for our purposes
+    # Step 1: Extract all unsigned integers to find our markers.
+    uints_str = re.findall(r'<U\d\s\[\d+\]\s(\d+)>', full_text)
+    if len(uints_str) < 3: return {}
 
-    ceid = int(uints[1])
-    rptid = int(uints[2])
+    # Step 2: Identify CEID and RPTID.
+    ceid = int(uints_str[1])
+    rptid = int(uints_str[2])
 
     if ceid in CEID_MAP:
         data['CEID'] = ceid
         if "Alarm" in CEID_MAP.get(ceid, ''): data['AlarmID'] = ceid
     
     if rptid not in RPTID_MAP:
-        return data # We don't have a schema for this report, return what we have
+        return data
 
     data['RPTID'] = rptid
-    
-    # --- NEW LOGIC: Delegate parsing based on RPTID ---
-    # Find the body of the report list that directly follows the RPTID
-    report_body_match = re.search(r'<\s*U\d\s*\[\d+\]\s*' + str(rptid) + r'\s*>\s*<L\s*\[\d+\]\s*([\s\S]*?)>\s*>', full_text)
-    if not report_body_match: return data
-    
-    report_body = report_body_match.group(1)
-    
-    # Extract all primitive values from ONLY the report body
-    values = re.findall(r"<(?:A|U\d)\s\[\d+\]\s(?:'([^']*)'|(\d+))>", report_body)
-    flat_values = [s if s else i for s, i in values]
-    
-    # Map values to names using our RPTID_MAP schema
-    field_names = RPTID_MAP.get(rptid, [])
-    for i, name in enumerate(field_names):
-        if i < len(flat_values):
-            data[name] = flat_values[i]
-            
+
+    # Step 3: Find the exact position of the RPTID string.
+    # The data we want is everything that comes AFTER it.
+    try:
+        # Construct the exact string for the RPTID tag, e.g., "<U4 [1] 141>"
+        # We need to find the specific U-type for the rptid
+        rptid_tag_match = re.search(r'(<U\d\s\[\d+\]\s' + str(rptid) + '>)', full_text)
+        if not rptid_tag_match: return data
+        
+        rptid_tag = rptid_tag_match.group(1)
+        # Find the start index of the string immediately after the RPTID tag
+        start_index = full_text.find(rptid_tag) + len(rptid_tag)
+        
+        # The report body is everything after that index.
+        report_body = full_text[start_index:]
+        
+        # Step 4: Extract all primitive values from this point forward.
+        values = re.findall(r"<(?:A|U\d)\s\[\d+\]\s(?:'([^']*)'|(\d+))>", report_body)
+        flat_values = [s if s else i for s, i in values]
+        
+        # Step 5: Map these values to our schema.
+        field_names = RPTID_MAP.get(rptid, [])
+        for i, name in enumerate(field_names):
+            if i < len(flat_values):
+                data[name] = flat_values[i]
+    except Exception:
+        # Failsafe in case of malformed data
+        return data
+
     return data
+
+# ----------------- END OF CHANGED CODE -----------------
+
 
 def _parse_s2f49_command(full_text: str) -> dict:
     """Parses S2F49 Remote Commands."""
@@ -74,15 +91,14 @@ def parse_log_file(uploaded_file):
         if not header_match: i += 1; continue
         
         timestamp, log_type, message_part = header_match.groups()
-        
         msg_match = re.search(r"MessageName=(\w+)|Message=.*?:\'(\w+)\'", message_part)
         msg_name = (msg_match.group(1) or msg_match.group(2)) if msg_match else "N/A"
         
         event = {"timestamp": timestamp, "log_type": log_type, "msg_name": msg_name}
         
-        data_block_lines = []
         if ("Core:Send" in log_type or "Core:Receive" in log_type) and i + 1 < len(lines) and lines[i+1].strip().startswith('<'):
             j = i + 1
+            data_block_lines = []
             while j < len(lines) and lines[j].strip() != '.':
                 data_block_lines.append(lines[j]); j += 1
             i = j
