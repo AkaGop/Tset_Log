@@ -6,57 +6,55 @@ from config import CEID_MAP, RPTID_MAP
 
 def _parse_s6f11_report(full_text: str) -> dict:
     """
-    Final, robust parser for S6F11. Finds the RPTID and correctly
-    extracts the ordered data that follows it by tokenizing the input.
+    Final, correct, and robust parser for S6F11. This version correctly
+    identifies the primary data list and extracts data based on RPTID schema.
     """
     data = {}
     
     # --- START OF HIGHLIGHTED FIX ---
 
-    # Step 1: Tokenize the entire data block into a flat list of its primitive values.
-    # This regex is designed to capture EITHER a string in single quotes OR a sequence of digits.
-    tokens = re.findall(r"'(.*?)'|(\d+)", full_text)
-    # The result is a list of tuples, e.g., [('', '181'), ('M70256', '')]. Flatten it into a clean list.
+    # Step 1: An S6F11's primary data is inside the top-level <L[3]>.
+    # We find this block first to isolate our workspace.
+    top_level_list_match = re.search(r'<\s*L\s*\[3\]\s*([\s\S]*)', full_text)
+    if not top_level_list_match:
+        return {}
+    
+    s6f11_body = top_level_list_match.group(1)
+
+    # Step 2: Extract all primitive values (strings and integers) from this body.
+    tokens = re.findall(r"<(?:A|U\d)\s\[\d+\]\s(?:'([^']*)'|(\d+))>", s6f11_body)
     flat_values = [s if s else i for s, i in tokens]
 
-    if len(flat_values) < 3:
-        return {} # A valid report must have at least DATAID, CEID, RPTID.
+    if len(flat_values) < 3: return {}
 
-    # Step 2: Identify CEID and RPTID by their standard positions in the token list.
-    # The first three numeric tokens are always DATAID, CEID, RPTID.
+    # Step 3: In an S6F11 body, the first three values are always DATAID, CEID, and a List of Reports.
+    # The RPTID is the first value inside that List of Reports.
     try:
-        uints = [int(v) for v in flat_values if v.isdigit()]
-        ceid = uints[1]
-        rptid = uints[2]
+        ceid = int(flat_values[1])
+        rptid = int(flat_values[2])
     except (ValueError, IndexError):
-        return {} # Malformed message.
+        return {}
 
-    # Step 3: Populate initial data and verify the RPTID is one we know how to parse.
+    # Step 4: Populate data and validate against our schemas.
     if ceid in CEID_MAP:
         data['CEID'] = ceid
-        if "Alarm" in CEID_MAP.get(ceid, ''):
-            data['AlarmID'] = ceid
-            
+        if "Alarm" in CEID_MAP.get(ceid, ''): data['AlarmID'] = ceid
+    
     if rptid in RPTID_MAP:
         data['RPTID'] = rptid
     else:
-        return data # We found a CEID but have no schema for this report.
+        return data
 
-    # Step 4: Find the RPTID's index in the flat token list.
+    # Step 5: The actual report data starts AFTER the RPTID token.
     try:
         rptid_index = flat_values.index(str(rptid))
-        
-        # Step 5: The true data payload is the slice of the list immediately following the RPTID.
         data_payload = flat_values[rptid_index + 1:]
         
-        # Step 6: Map this clean payload to the field names from our config schema.
         field_names = RPTID_MAP.get(rptid, [])
         for i, name in enumerate(field_names):
             if i < len(data_payload):
                 data[name] = data_payload[i]
-                
     except (ValueError, IndexError):
-        # This acts as a failsafe if the data is malformed.
         pass
 
     # --- END OF HIGHLIGHTED FIX ---
@@ -64,7 +62,7 @@ def _parse_s6f11_report(full_text: str) -> dict:
     return data
 
 def _parse_s2f49_command(full_text: str) -> dict:
-    """Parses S2F49 Remote Commands."""
+    """Parses S2F49 Remote Commands (This function is correct and unchanged)."""
     data = {}
     rcmd_match = re.search(r"<\s*A\s*\[\d+\]\s*'([A-Z_]{5,})'", full_text)
     if rcmd_match: data['RCMD'] = rcmd_match.group(1)
