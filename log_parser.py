@@ -4,45 +4,56 @@ import re
 from io import StringIO
 from config import CEID_MAP, RPTID_MAP
 
-def _parse_secs_data(msg_name, data_block_lines):
-    """
-    Master function to delegate parsing based on the SECS message name.
-    """
-    full_text = "".join(data_block_lines)
-    
-    if msg_name == 'S6F11':
-        return _parse_s6f11_report(full_text)
-    elif msg_name == 'S2F49':
-        return _parse_s2f49_command(full_text)
-    
-    return {} # Return empty dict for message types we don't parse
-
 def _parse_s6f11_report(full_text: str) -> dict:
-    """Parses S6F11 Event Reports based on their RPTID."""
+    """
+    A robust, state-aware parser for S6F11 event reports.
+    """
     data = {}
-    uints = re.findall(r'<U\d\s\[\d+\]\s(\d+)>', full_text)
     
-    if len(uints) < 2: return {}
+    # Step 1: Extract ALL primitive values (strings and integers) into a single flat list.
+    # This regex captures either a string inside quotes or a number.
+    all_values = re.findall(r"<(?:A|U\d)\s\[\d+\]\s(?:'([^']*)'|(\d+))>", full_text)
+    # The result is a list of tuples, e.g., [('', '181'), ('M70256', '')]. Flatten it.
+    flat_values = [s if s else i for s, i in all_values]
 
-    ceid = int(uints[1])
+    if len(flat_values) < 3:
+        return {} # Not a valid report if it doesn't have at least DATAID, CEID, RPTID
+
+    # Step 2: Identify CEID and RPTID by their known positions.
+    # Note: SECS format can vary slightly, but for S6F11, these positions are standard.
+    # We find all integers first to locate our key markers.
+    uints = [int(v) for v in flat_values if v.isdigit()]
+    
+    ceid = uints[1]
+    rptid = uints[2]
+
+    # Step 3: Populate initial data and check if we should proceed.
     if ceid in CEID_MAP:
         data['CEID'] = ceid
-        if "Alarm" in CEID_MAP[ceid]: data['AlarmID'] = ceid
+        if "Alarm" in CEID_MAP.get(ceid, ''):
+            data['AlarmID'] = ceid
+    
+    if rptid in RPTID_MAP:
+        data['RPTID'] = rptid
+    else:
+        return data # We found a CEID but don't know how to parse this specific report.
 
-    if len(uints) >= 3:
-        rptid = int(uints[2])
-        if rptid in RPTID_MAP:
-            data['RPTID'] = rptid
-            # Simplified, non-greedy regex to find the data list following the RPTID
-            match = re.search(r'<\s*U\d\s*\[\d+\]\s*' + str(rptid) + r'\s*>\s*<L\[\d+\]\s*([\s\S]*?)>\s*>', full_text)
-            if match:
-                body = match.group(1)
-                values = re.findall(r"<(?:A|U\d)\s\[\d+\]\s(?:'([^']*)'|(\d+))>", body)
-                flat_values = [s if s else i for s, i in values]
-                field_names = RPTID_MAP.get(rptid, [])
-                for i, name in enumerate(field_names):
-                    if i < len(flat_values):
-                        data[name] = flat_values[i]
+    # Step 4: Find the RPTID in the flat list and get the data that follows.
+    try:
+        # Find the index of the RPTID string in our flat list of all values.
+        rptid_index = flat_values.index(str(rptid))
+        # The actual report data starts at the index AFTER the RPTID.
+        report_data_values = flat_values[rptid_index + 1:]
+        
+        # Step 5: Map the extracted data to field names from our config.
+        field_names = RPTID_MAP.get(rptid, [])
+        for i, name in enumerate(field_names):
+            if i < len(report_data_values):
+                data[name] = report_data_values[i]
+    except (ValueError, IndexError):
+        # This will happen if the RPTID isn't found or data is malformed. Fail gracefully.
+        return data 
+
     return data
 
 def _parse_s2f49_command(full_text: str) -> dict:
@@ -60,10 +71,8 @@ def _parse_s2f49_command(full_text: str) -> dict:
     return data
 
 def parse_log_file(uploaded_file):
-    """Main parsing function. Iterates through the log file line by line."""
     events = []
     if not uploaded_file: return events
-    
     try: stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
     except UnicodeDecodeError: stringio = StringIO(uploaded_file.getvalue().decode("latin-1", errors='ignore'))
     
@@ -75,7 +84,6 @@ def parse_log_file(uploaded_file):
         if not header_match: i += 1; continue
         
         timestamp, log_type, message_part = header_match.groups()
-        
         msg_match = re.search(r"MessageName=(\w+)|Message=.*?:\'(\w+)\'", message_part)
         msg_name = (msg_match.group(1) or msg_match.group(2)) if msg_match else "N/A"
         
@@ -89,9 +97,14 @@ def parse_log_file(uploaded_file):
             i = j
             
             if data_block_lines:
-                details = _parse_secs_data(msg_name, data_block_lines)
+                full_data_block_text = "".join(data_block_lines)
+                details = {}
+                if msg_name == 'S6F11': details = _parse_s6f11_report(full_data_block_text)
+                elif msg_name == 'S2F49': details = _parse_s2f49_command(full_data_block_text)
                 if details: event['details'] = details
         
-        events.append(event)
+        if 'details' in event: # Only append events that we successfully parsed details for
+            events.append(event)
         i += 1
+            
     return events
