@@ -4,77 +4,63 @@ import re
 from io import StringIO
 from config import CEID_MAP, RPTID_MAP
 
-# ----------------- START OF CHANGED CODE -----------------
-
 def _parse_s6f11_report(full_text: str) -> dict:
     """
-    Final robust parser for S6F11. Finds the RPTID and correctly
+    Final, robust parser for S6F11. Finds the RPTID and correctly
     extracts the ordered data that follows it, regardless of list nesting.
     """
     data = {}
     
-    # Step 1: Extract all unsigned integers to find our markers.
-    uints_str = re.findall(r'<U\d\s\[\d+\]\s(\d+)>', full_text)
-    if len(uints_str) < 3: return {}
+    # --- START OF HIGHLIGHTED CHANGE ---
+    
+    # Step 1: Find all integer values to identify key markers.
+    uints = [int(val) for val in re.findall(r'<U\d\s\[\d+\]\s(\d+)>', full_text)]
+    if len(uints) < 3: return {}
 
-    # Step 2: Identify CEID and RPTID.
-    ceid = int(uints_str[1])
-    rptid = int(uints_str[2])
-
+    # Step 2: Assign CEID and RPTID from their known positions.
+    ceid, rptid = uints[1], uints[2]
+    
     if ceid in CEID_MAP:
         data['CEID'] = ceid
         if "Alarm" in CEID_MAP.get(ceid, ''): data['AlarmID'] = ceid
     
     if rptid not in RPTID_MAP:
-        return data
-
+        return data  # Return if we don't know the report structure.
     data['RPTID'] = rptid
 
-    # Step 3: Find the exact position of the RPTID string.
-    # The data we want is everything that comes AFTER it.
-    try:
-        # Construct the exact string for the RPTID tag, e.g., "<U4 [1] 141>"
-        # We need to find the specific U-type for the rptid
-        rptid_tag_match = re.search(r'(<U\d\s\[\d+\]\s' + str(rptid) + '>)', full_text)
-        if not rptid_tag_match: return data
-        
-        rptid_tag = rptid_tag_match.group(1)
-        # Find the start index of the string immediately after the RPTID tag
-        start_index = full_text.find(rptid_tag) + len(rptid_tag)
-        
-        # The report body is everything after that index.
-        report_body = full_text[start_index:]
-        
-        # Step 4: Extract all primitive values from this point forward.
-        values = re.findall(r"<(?:A|U\d)\s\[\d+\]\s(?:'([^']*)'|(\d+))>", report_body)
-        flat_values = [s if s else i for s, i in values]
-        
-        # Step 5: Map these values to our schema.
-        field_names = RPTID_MAP.get(rptid, [])
-        for i, name in enumerate(field_names):
-            if i < len(flat_values):
-                data[name] = flat_values[i]
-    except Exception:
-        # Failsafe in case of malformed data
-        return data
-
+    # Step 3: Find the full text of the RPTID tag itself to use as an anchor.
+    rptid_tag_match = re.search(r'(<\s*U\d\s*\[\d+\]\s*' + str(rptid) + r'\s*>)', full_text)
+    if not rptid_tag_match: return data
+    
+    # Step 4: Isolate the true report body.
+    # The body is the text between the RPTID tag and the end of its enclosing list block.
+    # This is the most reliable way to handle nested lists.
+    start_index = rptid_tag_match.end()
+    body_text = full_text[start_index:]
+    
+    # Step 5: Extract all primitive values (strings and integers) from the body ONLY.
+    values = re.findall(r"<(?:A|U\d)\s\[\d+\]\s(?:'([^']*)'|(\d+))>", body_text)
+    flat_values = [s if s else i for s, i in values]
+    
+    # Step 6: Map these extracted values to the fields defined in our config schema.
+    field_names = RPTID_MAP.get(rptid, [])
+    for i, name in enumerate(field_names):
+        if i < len(flat_values):
+            data[name] = flat_values[i]
+            
+    # --- END OF HIGHLIGHTED CHANGE ---
+            
     return data
-
-# ----------------- END OF CHANGED CODE -----------------
-
 
 def _parse_s2f49_command(full_text: str) -> dict:
     """Parses S2F49 Remote Commands."""
     data = {}
     rcmd_match = re.search(r"<\s*A\s*\[\d+\]\s*'([A-Z_]{5,})'", full_text)
     if rcmd_match: data['RCMD'] = rcmd_match.group(1)
-        
     lotid_match = re.search(r"'LOTID'\s*>\s*<A\[\d+\]\s*'([^']*)'", full_text, re.IGNORECASE)
     if lotid_match: data['LotID'] = lotid_match.group(1)
-    
     panels_match = re.search(r"'LOTPANELS'\s*>\s*<L\s\[(\d+)\]", full_text, re.IGNORECASE)
     if panels_match: data['PanelCount'] = int(panels_match.group(1))
-        
     return data
 
 def parse_log_file(uploaded_file):
@@ -83,35 +69,29 @@ def parse_log_file(uploaded_file):
     try: stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
     except UnicodeDecodeError: stringio = StringIO(uploaded_file.getvalue().decode("latin-1", errors='ignore'))
     
-    lines = stringio.readlines()
+    lines = [line for line in stringio.readlines() if line.strip()] # Filter out empty lines
     i = 0
     while i < len(lines):
         line = lines[i].strip()
         header_match = re.match(r"(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d+),\[([^\]]+)\],(.*)", line)
         if not header_match: i += 1; continue
-        
         timestamp, log_type, message_part = header_match.groups()
         msg_match = re.search(r"MessageName=(\w+)|Message=.*?:\'(\w+)\'", message_part)
         msg_name = (msg_match.group(1) or msg_match.group(2)) if msg_match else "N/A"
-        
         event = {"timestamp": timestamp, "log_type": log_type, "msg_name": msg_name}
-        
         if ("Core:Send" in log_type or "Core:Receive" in log_type) and i + 1 < len(lines) and lines[i+1].strip().startswith('<'):
             j = i + 1
             data_block_lines = []
             while j < len(lines) and lines[j].strip() != '.':
                 data_block_lines.append(lines[j]); j += 1
             i = j
-            
             if data_block_lines:
                 full_data_block_text = "".join(data_block_lines)
                 details = {}
                 if msg_name == 'S6F11': details = _parse_s6f11_report(full_data_block_text)
                 elif msg_name == 'S2F49': details = _parse_s2f49_command(full_data_block_text)
                 if details: event['details'] = details
-        
         if 'details' in event:
             events.append(event)
         i += 1
-            
     return events
