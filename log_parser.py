@@ -4,54 +4,28 @@ import re
 from io import StringIO
 from config import CEID_MAP, RPTID_MAP
 
-def _parse_s6f11_report(full_text: str) -> dict:
-    """
-    Final, robust, and simple parser for S6F11.
-    It tokenizes the message and maps values by their documented order.
-    """
+def _parse_event_report(full_text: str) -> dict:
     data = {}
-    
-    # --- START OF HIGHLIGHTED FIX ---
-
-    # Step 1: Tokenize the entire data block into a flat list of primitive values.
-    # This captures both strings in quotes and numbers.
-    values = re.findall(r"<(?:A|U\d)\s\[\d+\]\s(?:'([^']*)'|(\d+))>", full_text)
-    flat_values = [s if s else i for s, i in values]
-
-    # An S6F11 must have at least DATAID, CEID, and RPTID.
-    if len(flat_values) < 3:
-        return {}
-
-    # Step 2: Map values directly based on the stable SECS-II S6F11 structure.
-    try:
-        ceid = int(flat_values[1])  # The 2nd token is always CEID
-        rptid = int(flat_values[2]) # The 3rd token is always RPTID
-    except (ValueError, IndexError):
-        return {} # Handle malformed data
-
-    # Step 3: Populate the dictionary if the IDs are known.
+    uints = [int(val) for val in re.findall(r'<U\d\s\[\d+\]\s(\d+)>', full_text)]
+    if len(uints) < 3: return {}
+    ceid, rptid = uints[1], uints[2]
     if ceid in CEID_MAP:
         data['CEID'] = ceid
-        if "Alarm" in CEID_MAP.get(ceid, ''):
-            data['AlarmID'] = ceid
-    
+        if "Alarm" in CEID_MAP.get(ceid, ''): data['AlarmID'] = ceid
     if rptid in RPTID_MAP:
         data['RPTID'] = rptid
-        # The actual data payload starts from the 4th token onwards.
-        data_payload = flat_values[3:]
-        
-        # Map the payload to the schema from our config.
-        field_names = RPTID_MAP.get(rptid, [])
-        for i, name in enumerate(field_names):
-            if i < len(data_payload):
-                data[name] = data_payload[i]
-            
-    # --- END OF HIGHLIGHTED FIX ---
-            
+        values = re.findall(r"<(?:A|U\d)\s\[\d+\]\s(?:'([^']*)'|(\d+))>", full_text)
+        flat_values = [s if s else i for s, i in values]
+        try:
+            rptid_index = flat_values.index(str(rptid))
+            data_payload = flat_values[rptid_index + 1:]
+            field_names = RPTID_MAP.get(rptid, [])
+            for i, name in enumerate(field_names):
+                if i < len(data_payload): data[name] = data_payload[i]
+        except (ValueError, IndexError): pass
     return data
 
 def _parse_s2f49_command(full_text: str) -> dict:
-    """Parses S2F49 Remote Commands (This function is correct)."""
     data = {}
     rcmd_match = re.search(r"<\s*A\s*\[\d+\]\s*'([A-Z_]{5,})'", full_text)
     if rcmd_match: data['RCMD'] = rcmd_match.group(1)
@@ -66,7 +40,6 @@ def parse_log_file(uploaded_file):
     if not uploaded_file: return events
     try: stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
     except UnicodeDecodeError: stringio = StringIO(uploaded_file.getvalue().decode("latin-1", errors='ignore'))
-    
     lines = [line for line in stringio.readlines() if line.strip()]
     i = 0
     while i < len(lines):
@@ -80,8 +53,7 @@ def parse_log_file(uploaded_file):
         if ("Core:Send" in log_type or "Core:Receive" in log_type) and i + 1 < len(lines) and lines[i+1].strip().startswith('<'):
             j = i + 1
             data_block_lines = []
-            while j < len(lines) and lines[j].strip() != '.':
-                data_block_lines.append(lines[j]); j += 1
+            while j < len(lines) and lines[j].strip() != '.': data_block_lines.append(lines[j]); j += 1
             i = j
             if data_block_lines:
                 full_data_block_text = "".join(data_block_lines)
