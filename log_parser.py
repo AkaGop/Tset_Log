@@ -6,54 +6,44 @@ from config import CEID_MAP, RPTID_MAP
 
 def _parse_s6f11_report(full_text: str) -> dict:
     """
-    A robust, state-aware parser for S6F11 event reports.
+    State-aware parser for S6F11. It identifies the RPTID and delegates
+    to a specific function for that report structure.
     """
     data = {}
     
-    # Step 1: Extract ALL primitive values (strings and integers) into a single flat list.
-    # This regex captures either a string inside quotes or a number.
-    all_values = re.findall(r"<(?:A|U\d)\s\[\d+\]\s(?:'([^']*)'|(\d+))>", full_text)
-    # The result is a list of tuples, e.g., [('', '181'), ('M70256', '')]. Flatten it.
-    flat_values = [s if s else i for s, i in all_values]
+    # Find all Unsigned Integers to identify CEID and RPTID
+    uints = re.findall(r'<U\d\s\[\d+\]\s(\d+)>', full_text)
+    if len(uints) < 3: return {} # Not a valid S6F11 for our purposes
 
-    if len(flat_values) < 3:
-        return {} # Not a valid report if it doesn't have at least DATAID, CEID, RPTID
+    ceid = int(uints[1])
+    rptid = int(uints[2])
 
-    # Step 2: Identify CEID and RPTID by their known positions.
-    # Note: SECS format can vary slightly, but for S6F11, these positions are standard.
-    # We find all integers first to locate our key markers.
-    uints = [int(v) for v in flat_values if v.isdigit()]
-    
-    ceid = uints[1]
-    rptid = uints[2]
-
-    # Step 3: Populate initial data and check if we should proceed.
     if ceid in CEID_MAP:
         data['CEID'] = ceid
-        if "Alarm" in CEID_MAP.get(ceid, ''):
-            data['AlarmID'] = ceid
+        if "Alarm" in CEID_MAP.get(ceid, ''): data['AlarmID'] = ceid
     
-    if rptid in RPTID_MAP:
-        data['RPTID'] = rptid
-    else:
-        return data # We found a CEID but don't know how to parse this specific report.
+    if rptid not in RPTID_MAP:
+        return data # We don't have a schema for this report, return what we have
 
-    # Step 4: Find the RPTID in the flat list and get the data that follows.
-    try:
-        # Find the index of the RPTID string in our flat list of all values.
-        rptid_index = flat_values.index(str(rptid))
-        # The actual report data starts at the index AFTER the RPTID.
-        report_data_values = flat_values[rptid_index + 1:]
-        
-        # Step 5: Map the extracted data to field names from our config.
-        field_names = RPTID_MAP.get(rptid, [])
-        for i, name in enumerate(field_names):
-            if i < len(report_data_values):
-                data[name] = report_data_values[i]
-    except (ValueError, IndexError):
-        # This will happen if the RPTID isn't found or data is malformed. Fail gracefully.
-        return data 
-
+    data['RPTID'] = rptid
+    
+    # --- NEW LOGIC: Delegate parsing based on RPTID ---
+    # Find the body of the report list that directly follows the RPTID
+    report_body_match = re.search(r'<\s*U\d\s*\[\d+\]\s*' + str(rptid) + r'\s*>\s*<L\s*\[\d+\]\s*([\s\S]*?)>\s*>', full_text)
+    if not report_body_match: return data
+    
+    report_body = report_body_match.group(1)
+    
+    # Extract all primitive values from ONLY the report body
+    values = re.findall(r"<(?:A|U\d)\s\[\d+\]\s(?:'([^']*)'|(\d+))>", report_body)
+    flat_values = [s if s else i for s, i in values]
+    
+    # Map values to names using our RPTID_MAP schema
+    field_names = RPTID_MAP.get(rptid, [])
+    for i, name in enumerate(field_names):
+        if i < len(flat_values):
+            data[name] = flat_values[i]
+            
     return data
 
 def _parse_s2f49_command(full_text: str) -> dict:
@@ -84,14 +74,15 @@ def parse_log_file(uploaded_file):
         if not header_match: i += 1; continue
         
         timestamp, log_type, message_part = header_match.groups()
+        
         msg_match = re.search(r"MessageName=(\w+)|Message=.*?:\'(\w+)\'", message_part)
         msg_name = (msg_match.group(1) or msg_match.group(2)) if msg_match else "N/A"
         
         event = {"timestamp": timestamp, "log_type": log_type, "msg_name": msg_name}
         
+        data_block_lines = []
         if ("Core:Send" in log_type or "Core:Receive" in log_type) and i + 1 < len(lines) and lines[i+1].strip().startswith('<'):
             j = i + 1
-            data_block_lines = []
             while j < len(lines) and lines[j].strip() != '.':
                 data_block_lines.append(lines[j]); j += 1
             i = j
@@ -103,7 +94,7 @@ def parse_log_file(uploaded_file):
                 elif msg_name == 'S2F49': details = _parse_s2f49_command(full_data_block_text)
                 if details: event['details'] = details
         
-        if 'details' in event: # Only append events that we successfully parsed details for
+        if 'details' in event:
             events.append(event)
         i += 1
             
