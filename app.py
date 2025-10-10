@@ -4,7 +4,7 @@ import streamlit as st
 import pandas as pd
 from log_parser import parse_log_file
 from config import CEID_MAP
-from analyzer import analyze_log_data # Import our new analysis function
+from analyzer import analyze_log_data
 
 st.set_page_config(page_title="Hirata Log Analyzer", layout="wide")
 st.title("Hirata Equipment Log Analyzer")
@@ -15,26 +15,23 @@ if uploaded_file:
     with st.spinner("Analyzing log file..."):
         all_events = parse_log_file(uploaded_file)
         meaningful_events = [event for event in all_events if 'details' in event]
-        
-        # --- NEW: Perform analysis to get KPIs ---
         summary_data = analyze_log_data(meaningful_events)
 
-    # --- NEW: Display the KPI Dashboard ---
     st.header("Job Performance Dashboard")
     
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric(label="Lot ID", value=summary_data['lot_id'])
-    with col2:
-        st.metric(label="Total Panels Processed", value=summary_data['panel_count'])
-    with col3:
-        st.metric(label="Total Job Duration (sec)", value=f"{summary_data['total_duration_sec']:.2f}")
-    with col4:
-        st.metric(label="Avg. Cycle Time / Panel (sec)", value=f"{summary_data['avg_cycle_time_sec']:.2f}")
+    # --- START OF HIGHLIGHTED FIX ---
+    
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("Job Status", summary_data['job_status'])
+    col2.metric("Lot ID", summary_data['lot_id'])
+    col3.metric("Total Panels Processed", summary_data['panel_count'])
+    col4.metric("Total Job Duration (sec)", f"{summary_data['total_duration_sec']:.2f}")
+    col5.metric("Avg. Cycle Time / Panel (sec)", f"{summary_data['avg_cycle_time_sec']:.2f}")
+    
+    # --- END OF HIGHLIGHTED FIX ---
 
     st.write("---")
 
-    # --- Display the detailed event log (as before) ---
     st.header("Detailed Event Log")
     if meaningful_events:
         df = pd.json_normalize(meaningful_events)
@@ -44,20 +41,16 @@ if uploaded_file:
              df['EventName'] = df['details.RCMD']
         else:
              df['EventName'] = "Unknown"
-
         cols_in_order = [
             "timestamp", "msg_name", "EventName", "details.LotID", "details.PanelCount",
             "details.MagazineID", "details.OperatorID", "details.PortID", "details.PortStatus",
             "details.AlarmID"
         ]
         display_cols = [col for col in cols_in_order if col in df.columns]
-        
         st.dataframe(df[display_cols])
-
-        with st.expander("Show Raw JSON Data (First 20 Events for Debugging)"):
+        with st.expander("Show Raw JSON Data (First 20 Events)"):
             st.json(meaningful_events[:20])
     else:
-        st.warning("No meaningful S6F11 or S2F49 messages were found in the log file.")
-
+        st.warning("No meaningful parsed events were found in the log file.")
 else:
     st.info("Please upload a log file to begin analysis.")
