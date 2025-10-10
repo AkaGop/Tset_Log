@@ -12,19 +12,23 @@ uploaded_file = st.file_uploader("Upload your Hirata Log File (.txt or .log)", t
 
 if uploaded_file:
     with st.spinner("Analyzing log file..."):
-        all_events = parse_log_file(uploaded_file)
-    
-    meaningful_events = [event for event in all_events if 'details' in event]
+        # The parser now only returns events that have details.
+        parsed_events = parse_log_file(uploaded_file)
     
     st.header("Detailed Event Log")
 
-    if meaningful_events:
-        df = pd.json_normalize(meaningful_events)
+    if parsed_events:
+        df = pd.json_normalize(parsed_events)
         
+        # Create a human-readable 'EventName' column
         if 'details.CEID' in df.columns:
+            # Coerce errors to handle potential non-numeric data gracefully
+            df['details.CEID'] = pd.to_numeric(df['details.CEID'], errors='coerce')
             df['EventName'] = df['details.CEID'].map(CEID_MAP).fillna("Unknown Event")
+        elif 'details.RCMD' in df.columns:
+             df['EventName'] = df['details.RCMD']
         else:
-            df['EventName'] = df.get('details.RCMD', "Command")
+             df['EventName'] = "Unknown"
 
         cols_in_order = [
             "timestamp", "msg_name", "EventName", "details.LotID", "details.PanelCount",
@@ -38,8 +42,9 @@ if uploaded_file:
         st.dataframe(df[display_cols])
 
         with st.expander("Show Raw JSON Data (First 20 Events for Debugging)"):
-            st.json(meaningful_events[:20])
+            st.json(parsed_events[:20])
     else:
         st.warning("No meaningful S6F11 or S2F49 messages were found in the log file.")
+
 else:
     st.info("Please upload a log file to begin analysis.")
