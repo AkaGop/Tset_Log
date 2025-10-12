@@ -1,16 +1,7 @@
 # config.py
-
-# --- START OF HIGHLIGHTED CHANGE ---
-# RPTID_MAP is now simpler and does not include the 'Timestamp' field,
-# as it will be handled separately based on your A[16] insight.
-
-SECS_MAP = {
-    "S1F1": "Are You There Request", "S1F2": "Are You There Data",
-    "S1F3": "Selected Equipment Status Request", "S1F4": "Selected Equipment Status Data",
-    "S2F49": "Enhanced Remote Command", "S2F50": "Enhanced Remote Command Acknowledge",
-    "S6F11": "Event Report Send", "S6F12": "Event Report Acknowledge",
-}
-
+"""
+Single source of truth for all static configuration data.
+"""
 CEID_MAP = {
     11: "Equipment Offline", 12: "Control State Local", 13: "Control State Remote",
     16: "PP-SELECT Changed", 30: "Process State Change", 101: "Alarm Cleared",
@@ -21,7 +12,6 @@ CEID_MAP = {
     181: "MagazineDocked", 182: "MagazineUndocked", 183: "RequestOperatorIdCheck",
     184: "RequestOperatorLogin", 185: "RequestMappingCheck",
 }
-
 RPTID_MAP = {
     152: ['OperatorID'],
     150: ['MagazineID'],
@@ -33,4 +23,3 @@ RPTID_MAP = {
     11:  ['ControlState'],
     101: ['AlarmIDValue'],
 }
-# --- END OF HIGHLIGHTED CHANGE ---
