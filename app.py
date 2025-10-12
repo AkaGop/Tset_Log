@@ -1,14 +1,12 @@
 # app.py
-
-# app.py
 import streamlit as st
 import pandas as pd
 from log_parser import parse_log_file
 from config import CEID_MAP
 from analyzer import analyze_data
 
-st.set_page_config(page_title="Hirata Log Analyzer vFINAL", layout="wide")
-st.title("Hirata Equipment Log Analyzer vFINAL")
+st.set_page_config(page_title="Hirata Log Analyzer vFINAL-3", layout="wide")
+st.title("Hirata Equipment Log Analyzer vFINAL-3")
 
 uploaded_file = st.file_uploader("Upload your Hirata Log File (.txt or .log)", type=['txt', 'log'])
 if uploaded_file:
@@ -28,10 +26,12 @@ if uploaded_file:
         df = pd.json_normalize(events)
         if 'details.CEID' in df.columns:
             df['EventName'] = pd.to_numeric(df['details.CEID'], errors='coerce').map(CEID_MAP).fillna("Unknown")
-        elif 'details.RCMD' in df.columns:
-            df['EventName'] = df['details.RCMD']
+        elif 'details.RCMD' in df.columns: df['EventName'] = df['details.RCMD']
         else: df['EventName'] = "N/A"
-        cols = ["timestamp", "msg_name", "EventName", "details.LotID", "details.PanelCount", "details.MagazineID", "details.OperatorID", "details.PortID", "details.PortStatus", "details.AlarmID"]
+        cols = [
+            "timestamp", "msg_name", "EventName", "details.LotID", "details.PanelCount",
+            "details.MagazineID", "details.OperatorID", "details.PortID", "details.PortStatus", "details.AlarmID"
+        ]
         display_cols = [col for col in cols if col in df.columns]
         st.dataframe(df[display_cols])
         with st.expander("Show Raw JSON Data"): st.json(events)
