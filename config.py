@@ -1,7 +1,8 @@
 # config.py
 """
-Single source of truth for all static configuration data.
+Single source of truth for all static configuration data, knowledge bases, and report definitions.
 """
+
 CEID_MAP = {
     11: "Equipment Offline", 12: "Control State Local", 13: "Control State Remote",
     16: "PP-SELECT Changed", 30: "Process State Change", 101: "Alarm Cleared",
@@ -12,7 +13,9 @@ CEID_MAP = {
     181: "MagazineDocked", 182: "MagazineUndocked", 183: "RequestOperatorIdCheck",
     184: "RequestOperatorLogin", 185: "RequestMappingCheck",
 }
+
 RPTID_MAP = {
+    # Schema no longer includes 'Timestamp' as it is handled separately.
     152: ['OperatorID'],
     150: ['MagazineID'],
     151: ['PortID', 'MagazineID', 'OperatorID'],
