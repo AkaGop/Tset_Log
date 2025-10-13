@@ -1,2 +1,3 @@
+# Version 1.1 - Forcing a clean rebuild
 streamlit>=1.30.0
 pandas>=2.0.0
