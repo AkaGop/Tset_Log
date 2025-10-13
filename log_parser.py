@@ -4,14 +4,14 @@ import re
 from io import StringIO
 from config import CEID_MAP, RPTID_MAP
 
-def _find_enclosed_list_and_rest(text):
+def _find_enclosed_list(text):
     """
-    A robust function to find the content of the first top-level <L[...]...> 
-    block and the text that follows it. Returns a tuple of (body, rest).
+    A robust helper function to find the content of the first top-level <L[...]...> block.
+    It correctly handles nested brackets.
     """
     match = re.search(r"<\s*L\s*\[\d+\]\s*", text)
     if not match:
-        return None, None
+        return ""
     
     body_start = match.end()
     balance = 1
@@ -22,13 +22,8 @@ def _find_enclosed_list_and_rest(text):
             balance -= 1
         
         if balance == 0:
-            # Found the end of the list.
-            body_end = i
-            body = text[body_start:body_end]
-            rest = text[body_end+1:]
-            return body, rest
-            
-    return None, None
+            return text[body_start:i]
+    return ""
 
 def _get_primitive_tokens(text_block):
     """Extracts all primitive <A...> and <U...> values from a block of text."""
@@ -38,35 +33,29 @@ def _get_primitive_tokens(text_block):
 
 def _parse_s6f11_report(full_text: str) -> dict:
     """
-    Final, robust, state-machine-based parser for S6F11.
+    Final, robust, and structurally-aware parser for S6F11 reports.
     """
     data = {}
     
-    # --- START OF FINAL, CORRECTED LOGIC ---
-
-    # Step 1: Isolate the main <L,3> body of the S6F11 message.
-    s6f11_body, _ = _find_enclosed_list(full_text)
+    # Isolate the main <L,3> body of the S6F11 message.
+    s6f11_body = _find_enclosed_list(full_text)
     if not s6f11_body: return {}
 
-    # Step 2: Extract the top-level items. We expect two primitives and one list.
-    dataid_token = re.search(r"^\s*<\s*U\d\s*\[\d+\]\s*(\d+)\s*>", s6f11_body)
-    if not dataid_token: return {}
+    # Extract top-level items: we expect two primitives and one list block.
+    # The regex now correctly captures primitives OR the start of a list.
+    top_items = re.findall(r"<\s*U\d\s*\[\d+\]\s*(\d+)\s*>|<\s*L\s*\[", s6f11_body)
     
-    # Find the text after the DATAID
-    after_dataid = s6f11_body[dataid_token.end():]
-    ceid_token = re.search(r"^\s*<\s*U\d\s*\[\d+\]\s*(\d+)\s*>", after_dataid)
-    if not ceid_token: return {}
-    
-    # The report list is everything after the CEID
-    report_list_text = after_dataid[ceid_token.end():]
-    
+    if len(top_items) < 2: return {}
+
     try:
-        ceid = int(ceid_token.group(1))
+        ceid = int(top_items[1])
+        # Find the text that comes after the CEID tag to isolate the report list
+        ceid_tag_match = re.search(r'<\s*U\d\s*\[\d+\]\s*' + str(ceid) + r'\s*>', s6f11_body)
+        report_list_text = s6f11_body[ceid_tag_match.end():]
     except (ValueError, IndexError):
         return {}
-
-    # Step 3: Parse the Report List block
-    report_body, _ = _find_enclosed_list(report_list_text)
+    
+    report_body = _find_enclosed_list(report_list_text)
     if not report_body: return {}
 
     report_tokens = _get_primitive_tokens(report_body)
@@ -74,37 +63,28 @@ def _parse_s6f11_report(full_text: str) -> dict:
     
     rptid = int(report_tokens[0])
 
-    # Step 4: Populate data and validate against schemas.
     if ceid in CEID_MAP:
         data['CEID'] = ceid
         if "Alarm" in CEID_MAP.get(ceid, ''): data['AlarmID'] = ceid
     
     if rptid in RPTID_MAP:
         data['RPTID'] = rptid
-    else:
-        return data
-
-    # Step 5: The payload is all tokens in the report body AFTER the RPTID.
-    data_payload = report_tokens[1:]
-    
-    # Step 6: Map the clean payload to the schema.
-    field_names = RPTID_MAP.get(rptid, [])
-    for i, name in enumerate(field_names):
-        if i < len(data_payload):
-            data[name] = data_payload[i]
-            
-    # --- END OF FINAL, CORRECTED LOGIC ---
+        data_payload = report_tokens[1:]
+        field_names = RPTID_MAP.get(rptid, [])
+        for i, name in enumerate(field_names):
+            if i < len(data_payload):
+                data[name] = data_payload[i]
             
     return data
 
 def _parse_s2f49_command(full_text: str) -> dict:
     data = {}
-    rcmd = re.search(r"<\s*A\s*\[\d+\]\s*'([A-Z_]{5,})'", full_text)
-    if rcmd: data['RCMD'] = rcmd.group(1)
-    lotid = re.search(r"'LOTID'\s*>\s*<A\[\d+\]\s*'([^']*)'", full_text, re.IGNORECASE)
-    if lotid: data['LotID'] = lotid.group(1)
-    panels = re.search(r"'LOTPANELS'\s*>\s*<L\s\[(\d+)\]", full_text, re.IGNORECASE)
-    if panels: data['PanelCount'] = int(panels.group(1))
+    rcmd_match = re.search(r"<\s*A\s*\[\d+\]\s*'([A-Z_]{5,})'", full_text)
+    if rcmd_match: data['RCMD'] = rcmd_match.group(1)
+    lotid_match = re.search(r"'LOTID'\s*>\s*<A\[\d+\]\s*'([^']*)'", full_text, re.IGNORECASE)
+    if lotid_match: data['LotID'] = lotid_match.group(1)
+    panels_match = re.search(r"'LOTPANELS'\s*>\s*<L\s\[(\d+)\]", full_text, re.IGNORECASE)
+    if panels_match: data['PanelCount'] = int(panels_match.group(1))
     return data
 
 def parse_log_file(uploaded_file):
