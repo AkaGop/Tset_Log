@@ -4,80 +4,54 @@ import re
 from io import StringIO
 from config import CEID_MAP, RPTID_MAP
 
-def _find_enclosed_list(text):
-    """
-    A robust helper function to find the content of the first top-level <L[...]...> block.
-    It correctly handles nested brackets.
-    """
-    match = re.search(r"<\s*L\s*\[\d+\]\s*", text)
-    if not match:
-        return ""
-    
-    body_start = match.end()
-    balance = 1
-    for i in range(body_start, len(text)):
-        if text[i] == '<':
-            balance += 1
-        elif text[i] == '>':
-            balance -= 1
-        
-        if balance == 0:
-            return text[body_start:i]
-    return ""
-
-def _get_primitive_tokens(text_block):
-    """Extracts all primitive <A...> and <U...> values from a block of text."""
-    if not text_block: return []
-    tokens = re.findall(r"<(?:A|U\d)\s\[\d+\]\s(?:'([^']*)'|(\d+))>", text_block)
-    return [s if s else i for s, i in tokens]
-
 def _parse_s6f11_report(full_text: str) -> dict:
     """
     Final, robust, and structurally-aware parser for S6F11 reports.
     """
     data = {}
     
-    # Isolate the main <L,3> body of the S6F11 message.
-    s6f11_body = _find_enclosed_list(full_text)
-    if not s6f11_body: return {}
+    # --- START OF HIGHLIGHTED FINAL FIX ---
 
-    # Extract top-level items: we expect two primitives and one list block.
-    # The regex now correctly captures primitives OR the start of a list.
-    top_items = re.findall(r"<\s*U\d\s*\[\d+\]\s*(\d+)\s*>|<\s*L\s*\[", s6f11_body)
+    # Step 1: Find all integer values to identify key markers.
+    uints = [int(val) for val in re.findall(r'<U\d\s\[\d+\]\s(\d+)>', full_text)]
+    if len(uints) < 3: return {}
+
+    # Step 2: Identify CEID and RPTID.
+    ceid, rptid = uints[1], uints[2]
     
-    if len(top_items) < 2: return {}
-
-    try:
-        ceid = int(top_items[1])
-        # Find the text that comes after the CEID tag to isolate the report list
-        ceid_tag_match = re.search(r'<\s*U\d\s*\[\d+\]\s*' + str(ceid) + r'\s*>', s6f11_body)
-        report_list_text = s6f11_body[ceid_tag_match.end():]
-    except (ValueError, IndexError):
-        return {}
-    
-    report_body = _find_enclosed_list(report_list_text)
-    if not report_body: return {}
-
-    report_tokens = _get_primitive_tokens(report_body)
-    if not report_tokens: return {}
-    
-    rptid = int(report_tokens[0])
-
     if ceid in CEID_MAP:
         data['CEID'] = ceid
         if "Alarm" in CEID_MAP.get(ceid, ''): data['AlarmID'] = ceid
     
-    if rptid in RPTID_MAP:
-        data['RPTID'] = rptid
-        data_payload = report_tokens[1:]
-        field_names = RPTID_MAP.get(rptid, [])
-        for i, name in enumerate(field_names):
-            if i < len(data_payload):
-                data[name] = data_payload[i]
+    if rptid not in RPTID_MAP: return data
+    data['RPTID'] = rptid
+
+    # Step 3: CRITICAL FIX - Isolate the specific data payload.
+    # We build a precise regex to find the RPTID tag and then capture the contents
+    # of the list block that immediately follows it.
+    pattern = r'<\s*U\d\s*\[\d+\]\s*' + str(rptid) + r'\s*>\s*<L\s*\[\d+\]\s*([\s\S]*?)'
+    
+    match = re.search(pattern, full_text)
+    if not match: return data
+
+    report_body = match.group(1)
+    
+    # Step 4: Tokenize ONLY the isolated report body.
+    values = re.findall(r"<(?:A|U\d)\s\[\d+\]\s(?:'([^']*)'|(\d+))>", report_body)
+    flat_values = [s if s else i for s, i in values]
+    
+    # Step 5: Map these clean tokens to the field names from our config schema.
+    field_names = RPTID_MAP.get(rptid, [])
+    for i, name in enumerate(field_names):
+        if i < len(flat_values):
+            data[name] = flat_values[i]
+
+    # --- END OF HIGHLIGHTED FINAL FIX ---
             
     return data
 
 def _parse_s2f49_command(full_text: str) -> dict:
+    """Parses S2F49 Remote Commands (This function is correct)."""
     data = {}
     rcmd_match = re.search(r"<\s*A\s*\[\d+\]\s*'([A-Z_]{5,})'", full_text)
     if rcmd_match: data['RCMD'] = rcmd_match.group(1)
@@ -90,27 +64,31 @@ def _parse_s2f49_command(full_text: str) -> dict:
 def parse_log_file(uploaded_file):
     events = []
     if not uploaded_file: return events
-    try: lines = StringIO(uploaded_file.getvalue().decode("utf-8")).readlines()
-    except: lines = StringIO(uploaded_file.getvalue().decode("latin-1", errors='ignore')).readlines()
+    try: stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
+    except UnicodeDecodeError: stringio = StringIO(uploaded_file.getvalue().decode("latin-1", errors='ignore'))
+    lines = [line for line in stringio.readlines() if line.strip()]
     i = 0
     while i < len(lines):
         line = lines[i].strip()
-        header = re.match(r"(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d+),\[([^\]]+)\],(.*)", line)
-        if not header: i += 1; continue
-        ts, log_type, msg_part = header.groups()
-        msg_match = re.search(r"MessageName=(\w+)|Message=.*?:\'(\w+)\'", msg_part)
+        header_match = re.match(r"(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d+),\[([^\]]+)\],(.*)", line)
+        if not header_match: i += 1; continue
+        timestamp, log_type, message_part = header_match.groups()
+        msg_match = re.search(r"MessageName=(\w+)|Message=.*?:\'(\w+)\'", message_part)
         msg_name = (msg_match.group(1) or msg_match.group(2)) if msg_match else "N/A"
-        event = {"timestamp": ts, "msg_name": msg_name}
+        event = {"timestamp": timestamp, "log_type": log_type, "msg_name": msg_name}
         if ("Core:Send" in log_type or "Core:Receive" in log_type) and i + 1 < len(lines) and lines[i+1].strip().startswith('<'):
-            j = i + 1; block = []
-            while j < len(lines) and lines[j].strip() != '.': block.append(lines[j]); j += 1
+            j = i + 1
+            data_block_lines = []
+            while j < len(lines) and lines[j].strip() != '.':
+                data_block_lines.append(lines[j]); j += 1
             i = j
-            if block:
-                text = "".join(block)
+            if data_block_lines:
+                full_data_block_text = "".join(data_block_lines)
                 details = {}
-                if msg_name == 'S6F11': details = _parse_s6f11_report(text)
-                elif msg_name == 'S2F49': details = _parse_s2f49_command(text)
+                if msg_name == 'S6F11': details = _parse_s6f11_report(full_data_block_text)
+                elif msg_name == 'S2F49': details = _parse_s2f49_command(full_data_block_text)
                 if details: event['details'] = details
-        if 'details' in event: events.append(event)
+        if 'details' in event:
+            events.append(event)
         i += 1
     return events
