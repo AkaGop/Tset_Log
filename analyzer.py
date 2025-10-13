@@ -1,5 +1,4 @@
 # analyzer.py
-
 from datetime import datetime
 
 def analyze_data(events):
