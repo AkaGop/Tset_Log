@@ -4,55 +4,89 @@ import re
 from io import StringIO
 from config import CEID_MAP, RPTID_MAP
 
+def _find_enclosed_list(text):
+    """A helper function to find the content of a single, top-level <L[...]...> block."""
+    match = re.search(r"<\s*L\s*\[\d+\]\s*([\s\S]*)", text, re.DOTALL)
+    if not match:
+        return ""
+    
+    body = match.group(1).strip()
+    open_brackets = 1
+    for i, char in enumerate(body):
+        if char == '<':
+            open_brackets += 1
+        elif char == '>':
+            open_brackets -= 1
+        
+        if open_brackets == 0:
+            return body[:i]
+    return ""
+
 def _parse_s6f11_report(full_text: str) -> dict:
     """
-    Final, robust, and structurally-aware parser for S6F11 reports.
-    This version correctly isolates the data payload by parsing the SECS structure.
+    Final, robust, and structurally-aware parser for S6f11.
+    This version correctly isolates the data payload by navigating the list structure.
     """
     data = {}
     
-    # --- START OF HIGHLIGHTED FINAL FIX ---
-    
-    # Step 1: Find all integer values to identify key markers.
-    uints = [int(val) for val in re.findall(r'<U\d\s\[\d+\]\s(\d+)>', full_text)]
-    if len(uints) < 3: return {}
+    # --- START OF FINAL, CORRECTED LOGIC ---
 
-    # Step 2: Identify CEID and RPTID.
-    ceid, rptid = uints[1], uints[2]
+    # Step 1: Isolate the main <L,3> body of the S6F11 message.
+    main_body = _find_enclosed_list(full_text)
+    if not main_body: return {}
+
+    # Step 2: Extract the top-level items. We expect two <U...> tags and one <L...> block.
+    # This regex is specific and robust for this task.
+    top_items = re.findall(r"<\s*(?:U\d)\s*\[\d+\]\s*(\d+)\s*>|<\s*(L)\s*\[\d+\]\s*([\s\S]*)", main_body, re.DOTALL)
     
+    if len(top_items) < 3: return {}
+
+    try:
+        ceid = int(top_items[1][0]) # Second item is the CEID
+        
+        # The third item is the report list block.
+        report_list_body = top_items[2][2] 
+    except (ValueError, IndexError):
+        return {}
+    
+    # Find the RPTID within the report list block
+    rptid_match = re.search(r'<\s*U\d\s*\[\d+\]\s*(\d+)\s*>', report_list_body)
+    if not rptid_match: return {}
+    rptid = int(rptid_match.group(1))
+
+    # Step 3: Populate data and validate against schemas.
     if ceid in CEID_MAP:
         data['CEID'] = ceid
         if "Alarm" in CEID_MAP.get(ceid, ''): data['AlarmID'] = ceid
-    
-    if rptid not in RPTID_MAP: return data
-    data['RPTID'] = rptid
 
-    # Step 3: CRITICAL FIX - Isolate the specific data payload.
-    # We build a precise regex to find the RPTID tag and then capture the contents
-    # of the list block that immediately follows it.
-    pattern = r'<\s*U\d\s*\[\d+\]\s*' + str(rptid) + r'\s*>\s*<L\s*\[\d+\]\s*([\s\S]*?)'
-    
-    match = re.search(pattern, full_text)
-    if not match: return data
+    if rptid in RPTID_MAP:
+        data['RPTID'] = rptid
+    else:
+        return data
 
-    report_body = match.group(1)
+    # Step 4: Isolate the final data payload. It's the list that FOLLOWS the RPTID.
+    rptid_tag = rptid_match.group(0)
+    start_index = report_list_body.find(rptid_tag) + len(rptid_tag)
+    payload_text = report_list_body[start_index:]
     
-    # Step 4: Tokenize ONLY the isolated report body.
-    values = re.findall(r"<(?:A|U\d)\s\[\d+\]\s(?:'([^']*)'|(\d+))>", report_body)
+    payload_body = _find_enclosed_list(payload_text)
+
+    # Step 5: Tokenize ONLY the final, isolated payload.
+    values = re.findall(r"<(?:A|U\d)\s\[\d+\]\s(?:'([^']*)'|(\d+))>", payload_body)
     flat_values = [s if s else i for s, i in values]
     
-    # Step 5: Map these clean tokens to the field names from our config schema.
+    # Step 6: Map to schema.
     field_names = RPTID_MAP.get(rptid, [])
     for i, name in enumerate(field_names):
         if i < len(flat_values):
             data[name] = flat_values[i]
-
-    # --- END OF HIGHLIGHTED FINAL FIX ---
             
+    # --- END OF FINAL, CORRECTED LOGIC ---
+
     return data
 
+# The other functions remain the same.
 def _parse_s2f49_command(full_text: str) -> dict:
-    """Parses S2F49 Remote Commands (This function is correct)."""
     data = {}
     rcmd_match = re.search(r"<\s*A\s*\[\d+\]\s*'([A-Z_]{5,})'", full_text)
     if rcmd_match: data['RCMD'] = rcmd_match.group(1)
