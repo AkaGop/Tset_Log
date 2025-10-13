@@ -8,8 +8,8 @@ from analyzer import analyze_data
 
 # --- START OF HIGHLIGHTED CHANGE ---
 # Added a version number to the title to act as a "cache buster"
-st.set_page_config(page_title="Hirata Log Analyzer v1.1", layout="wide")
-st.title("Hirata Equipment Log Analyzer v1.1")
+st.set_page_config(page_title="Hirata Log Analyzer v1.3", layout="wide")
+st.title("Hirata Equipment Log Analyzer v1.3")
 # --- END OF HIGHLIGHTED CHANGE ---
 
 uploaded_file = st.file_uploader("Upload your Hirata Log File (.txt or .log)", type=['txt', 'log'])
