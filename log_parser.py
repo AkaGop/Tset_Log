@@ -6,25 +6,20 @@ from config import CEID_MAP, RPTID_MAP
 
 def _parse_s6f11_report(full_text: str) -> dict:
     """
-    Final, robust parser for S6F11, built on the user-provided rules.
-    1. A[16] is always the timestamp.
-    2. PortID is always a small integer.
-    3. PortStatus is always alphabetic.
+    Final, robust, and structurally-aware parser for S6F11 reports.
+    This version correctly isolates the data payload by parsing the SECS structure.
     """
     data = {}
     
     # --- START OF HIGHLIGHTED FINAL FIX ---
-
-    # Universal Step 1: Find all integer values to identify key markers.
+    
+    # Step 1: Find all integer values to identify key markers.
     uints = [int(val) for val in re.findall(r'<U\d\s\[\d+\]\s(\d+)>', full_text)]
     if len(uints) < 3: return {}
-    
-    try:
-        ceid, rptid = uints[1], uints[2]
-    except (ValueError, IndexError):
-        return {}
 
-    # Universal Step 2: Populate base data.
+    # Step 2: Identify CEID and RPTID.
+    ceid, rptid = uints[1], uints[2]
+    
     if ceid in CEID_MAP:
         data['CEID'] = ceid
         if "Alarm" in CEID_MAP.get(ceid, ''): data['AlarmID'] = ceid
@@ -32,40 +27,25 @@ def _parse_s6f11_report(full_text: str) -> dict:
     if rptid not in RPTID_MAP: return data
     data['RPTID'] = rptid
 
-    # Universal Step 3: Isolate the report body (everything after the RPTID tag).
-    rptid_tag_match = re.search(r'(<\s*U\d\s*\[\d+\]\s*' + str(rptid) + r'\s*>)', full_text)
-    if not rptid_tag_match: return data
-    start_index = rptid_tag_match.end()
-    report_body = full_text[start_index:]
+    # Step 3: CRITICAL FIX - Isolate the specific data payload.
+    # We build a precise regex to find the RPTID tag and then capture the contents
+    # of the list block that immediately follows it.
+    pattern = r'<\s*U\d\s*\[\d+\]\s*' + str(rptid) + r'\s*>\s*<L\s*\[\d+\]\s*([\s\S]*?)'
     
-    # Step 4: Rule #1 - Extract the Timestamp based on the A[16] pattern.
-    timestamp_match = re.search(r"<A\s\[16\]\s'([^']*)'>", report_body)
-    if timestamp_match:
-        data['ReportTimestamp'] = timestamp_match.group(1)
+    match = re.search(pattern, full_text)
+    if not match: return data
 
-    # Step 5: Extract all OTHER primitive values (the real data payload).
-    # This regex finds all A or U tags that are NOT <A[16]...>.
-    data_tokens = re.findall(r"<(A)(?!\s\[16\])\s\[\d+\]\s'([^']*)'|<(U\d)\s\[\d+\]\s(\d+)>", report_body)
+    report_body = match.group(1)
     
-    flat_payload = []
-    for (a_tag, a_val, u_tag, u_val) in data_tokens:
-        if a_tag: flat_payload.append(a_val)
-        if u_tag: flat_payload.append(u_val)
-
-    # Step 6: Map the clean data payload to our simplified schema from config.
+    # Step 4: Tokenize ONLY the isolated report body.
+    values = re.findall(r"<(?:A|U\d)\s\[\d+\]\s(?:'([^']*)'|(\d+))>", report_body)
+    flat_values = [s if s else i for s, i in values]
+    
+    # Step 5: Map these clean tokens to the field names from our config schema.
     field_names = RPTID_MAP.get(rptid, [])
     for i, name in enumerate(field_names):
-        if i < len(flat_payload):
-            value = flat_payload[i]
-            
-            # Step 7: Rule #2 & #3 - Validate data types before assigning.
-            if name == 'PortID' and value.isdigit() and len(value) < 3:
-                data[name] = value
-            elif name == 'PortStatus' and value.isalpha():
-                data[name] = value
-            elif name not in ['PortID', 'PortStatus']:
-                # For all other fields, assign directly.
-                data[name] = value
+        if i < len(flat_values):
+            data[name] = flat_values[i]
 
     # --- END OF HIGHLIGHTED FINAL FIX ---
             
